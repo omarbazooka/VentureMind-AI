@@ -1,8 +1,15 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
+from pydantic import SecretStr
 class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str
+    
+    # SecretStr to don't leak the apis in logs 
+    gemini_api_key: SecretStr | None = None
+    groq_api_key: SecretStr | None = None
+
+    turn_understanding_model: str = "gemini-3.1-flash-lite"
+
     model_config = SettingsConfigDict(
         env_file = ".env",
         env_file_encoding= "utf-8",

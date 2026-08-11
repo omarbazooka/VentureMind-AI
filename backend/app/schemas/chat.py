@@ -1,5 +1,6 @@
 from datetime import datetime
 from uuid import UUID
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
@@ -16,3 +17,14 @@ class ChatMessageResponse(BaseModel):
     role: str
     content: str
     created_at: datetime
+
+class ChatTurnStatus(StrEnum):
+    COMPLETED = "COMPLETED"
+    CLARIFICATION_REQUIRED = "CLARIFICATION_REQUIRED"
+
+
+class ChatTurnResponse(BaseModel):
+    status: ChatTurnStatus
+    user_message: ChatMessageResponse
+    assistant_message: ChatMessageResponse
+
