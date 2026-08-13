@@ -1,16 +1,17 @@
 from typing import Any
+from uuid import UUID
 
-from app.schemas.intake import (
-    ProfileField,
-    ProfileFieldUpdate,
-)
+from sqlalchemy.orm import Session
 
+from app.models.idea_profile import IdeaProfile
 from app.schemas.intake import (
     ProfileConflict,
     ProfileField,
+    ProfileFieldMetadata,
     ProfileFieldUpdate,
     ProfileMergePlan,
 )
+
 
 class ProfileValueValidationError(ValueError):
     pass
@@ -34,17 +35,14 @@ TEXT_FIELDS = {
     ProfileField.USER_GOAL,
 }
 
-
 TEXT_OR_LIST_FIELDS = {
     ProfileField.TARGET_CUSTOMERS,
     ProfileField.KNOWN_COMPETITORS,
 }
 
-
 BOOLEAN_OR_TEXT_FIELDS = {
     ProfileField.EXISTING_TEAM,
 }
-
 
 NUMBER_FIELDS = {
     ProfileField.BUDGET,
@@ -83,8 +81,7 @@ def _normalize_text_list(
 
         if not cleaned_item:
             raise ProfileValueValidationError(
-                f"{field.value} cannot contain "
-                "empty items"
+                f"{field.value} cannot contain empty items"
             )
 
         cleaned_items.append(cleaned_item)
@@ -115,17 +112,14 @@ def validate_and_normalize_update(
                 field=field,
                 value=value,
             )
-
         elif isinstance(value, list):
             normalized_value = _normalize_text_list(
                 field=field,
                 value=value,
             )
-
         else:
             raise ProfileValueValidationError(
-                f"{field.value} must be text "
-                "or a list of text values"
+                f"{field.value} must be text or a list of text values"
             )
 
     elif field in NUMBER_FIELDS:
@@ -147,29 +141,23 @@ def validate_and_normalize_update(
     elif field in BOOLEAN_OR_TEXT_FIELDS:
         if isinstance(value, bool):
             normalized_value = value
-
         elif isinstance(value, str):
             normalized_value = _normalize_text(
                 field=field,
                 value=value,
             )
-
         else:
             raise ProfileValueValidationError(
-                f"{field.value} must be "
-                "a boolean or text"
+                f"{field.value} must be a boolean or text"
             )
 
     else:
         raise ProfileValueValidationError(
-            f"No validation rule exists for "
-            f"{field.value}"
+            f"No validation rule exists for {field.value}"
         )
 
     return update.model_copy(
-        update={
-            "value": normalized_value,
-        }
+        update={"value": normalized_value}
     )
 
 
@@ -186,101 +174,68 @@ def _values_equivalent(
     current_value: Any,
     proposed_value: Any,
 ) -> bool:
-        # Strings
-        if isinstance(
-        current_value,
+    if isinstance(current_value, str) and isinstance(
+        proposed_value,
         str,
-        ) and isinstance(
-            proposed_value,
-            str,
-        ):
-            return (
-                current_value.strip().casefold()
-                == proposed_value.strip().casefold() # better than lower()
-            )
-
-        # handling Numbers like 1 or 0 
-        if isinstance(
-        current_value,
-        bool,
-        ) or isinstance(
-            proposed_value,
-            bool,
-        ):
-            return (
-                isinstance(current_value, bool)
-                and isinstance(proposed_value, bool)
-                and current_value == proposed_value
-            )
-
-        # Numbers
-        if (
-            isinstance(current_value, (int, float))
-            and isinstance(proposed_value, (int, float))
-        ):
-            return current_value == proposed_value
-
-        # Lists
-        if (
-            isinstance(current_value, list)
-            and isinstance(proposed_value, list)
-            and all(
-                isinstance(item, str)
-                for item in current_value
-            )
-            and all(
-                isinstance(item, str)
-                for item in proposed_value
-            )
-        ):
-            current_normalized = sorted(
-                item.strip().casefold()
-                for item in current_value
-            )
-
-            proposed_normalized = sorted(
-                item.strip().casefold()
-                for item in proposed_value
-            )
-
-            return (
-                current_normalized
-                == proposed_normalized
-            )
-
+    ):
         return (
-            type(current_value)
-            is type(proposed_value)
+            current_value.strip().casefold()
+            == proposed_value.strip().casefold()
+        )
+
+    if isinstance(current_value, bool) or isinstance(
+        proposed_value,
+        bool,
+    ):
+        return (
+            isinstance(current_value, bool)
+            and isinstance(proposed_value, bool)
             and current_value == proposed_value
         )
+
+    if isinstance(current_value, (int, float)) and isinstance(
+        proposed_value,
+        (int, float),
+    ):
+        return current_value == proposed_value
+
+    if (
+        isinstance(current_value, list)
+        and isinstance(proposed_value, list)
+        and all(isinstance(item, str) for item in current_value)
+        and all(isinstance(item, str) for item in proposed_value)
+    ):
+        current_normalized = sorted(
+            item.strip().casefold()
+            for item in current_value
+        )
+        proposed_normalized = sorted(
+            item.strip().casefold()
+            for item in proposed_value
+        )
+        return current_normalized == proposed_normalized
+
+    return (
+        type(current_value) is type(proposed_value)
+        and current_value == proposed_value
+    )
+
 
 def plan_profile_merge(
     *,
     current_data: dict[str, Any],
     updates: list[ProfileFieldUpdate],
 ) -> ProfileMergePlan:
-
-    validated_updates = validate_profile_updates(
-        updates
-    )
+    validated_updates = validate_profile_updates(updates)
     candidate_data = dict(current_data)
 
-    accepted_updates: list[
-        ProfileFieldUpdate
-    ] = []
-
-    conflicts: list[
-        ProfileConflict
-    ] = []
-
-    unchanged_fields: list[
-        ProfileField
-    ] = []
-
+    accepted_updates: list[ProfileFieldUpdate] = []
+    conflicts: list[ProfileConflict] = []
+    unchanged_fields: list[ProfileField] = []
 
     for update in validated_updates:
         key = update.field.value
-        # Accepting the Change
+
         if key not in current_data:
             accepted_updates.append(update)
             candidate_data[key] = update.value
@@ -288,17 +243,13 @@ def plan_profile_merge(
 
         current_value = current_data[key]
 
-        # Un Changing
         if _values_equivalent(
             current_value,
             update.value,
         ):
-            unchanged_fields.append(
-                update.field
-            )
+            unchanged_fields.append(update.field)
             continue
 
-        # Conflict
         conflicts.append(
             ProfileConflict(
                 field=update.field,
@@ -313,3 +264,62 @@ def plan_profile_merge(
         unchanged_fields=unchanged_fields,
         candidate_profile_data=candidate_data,
     )
+
+
+def persist_profile_merge_plan(
+    *,
+    db: Session,
+    idea_id: UUID,
+    current_profile: IdeaProfile,
+    merge_plan: ProfileMergePlan,
+    source_message_id: UUID | None = None,
+) -> IdeaProfile:
+    if current_profile.idea_id != idea_id:
+        raise ValueError(
+            "current_profile does not belong to idea_id"
+        )
+
+    if not merge_plan.accepted_updates:
+        return current_profile
+
+    next_metadata = dict(
+        current_profile.profile_metadata or {}
+    )
+    accepted_field_names: set[str] = set()
+
+    for update in merge_plan.accepted_updates:
+        field_name = update.field.value
+        accepted_field_names.add(field_name)
+
+        metadata = ProfileFieldMetadata(
+            provenance=update.provenance,
+            value_kind=update.value_kind,
+            confidence=update.confidence,
+            source_message_id=source_message_id,
+        )
+
+        next_metadata[field_name] = metadata.model_dump(
+            mode="json"
+        )
+
+    next_unknown_fields = [
+        field_name
+        for field_name in (current_profile.unknown_fields or [])
+        if field_name not in accepted_field_names
+    ]
+
+    new_profile = IdeaProfile(
+        idea_id=idea_id,
+        version=current_profile.version + 1,
+        readiness=current_profile.readiness,
+        profile_data=dict(
+            merge_plan.candidate_profile_data
+        ),
+        profile_metadata=next_metadata,
+        unknown_fields=next_unknown_fields,
+    )
+
+    db.add(new_profile)
+    db.flush()
+
+    return new_profile
