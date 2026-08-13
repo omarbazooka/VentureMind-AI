@@ -1,5 +1,5 @@
 from enum import StrEnum
-
+from typing import Any
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -73,6 +73,30 @@ class ProfileFieldUpdate(BaseModel):
         ge=0.0,
         le=1.0,
     )
+
+class ProfileConflict(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field: ProfileField
+    current_value: Any
+    proposed_value: ProfileValue
+
+class ProfileMergePlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    accepted_updates: list[ProfileFieldUpdate] = Field(
+        default_factory=list,
+    )
+
+    conflicts: list[ProfileConflict] = Field(
+        default_factory=list,
+    )
+
+    unchanged_fields: list[ProfileField] = Field(
+        default_factory=list,
+    )
+
+    candidate_profile_data: dict[str, Any]
 
 
 class IntakeExtraction(BaseModel): # obj to take one or more ProfileFieldUpdate in list

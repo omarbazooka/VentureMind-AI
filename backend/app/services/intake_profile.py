@@ -5,6 +5,12 @@ from app.schemas.intake import (
     ProfileFieldUpdate,
 )
 
+from app.schemas.intake import (
+    ProfileConflict,
+    ProfileField,
+    ProfileFieldUpdate,
+    ProfileMergePlan,
+)
 
 class ProfileValueValidationError(ValueError):
     pass
@@ -176,20 +182,134 @@ def validate_profile_updates(
     ]
 
 
-def build_candidate_profile_data(
+def _values_equivalent(
+    current_value: Any,
+    proposed_value: Any,
+) -> bool:
+        # Strings
+        if isinstance(
+        current_value,
+        str,
+        ) and isinstance(
+            proposed_value,
+            str,
+        ):
+            return (
+                current_value.strip().casefold()
+                == proposed_value.strip().casefold() # better than lower()
+            )
+
+        # handling Numbers like 1 or 0 
+        if isinstance(
+        current_value,
+        bool,
+        ) or isinstance(
+            proposed_value,
+            bool,
+        ):
+            return (
+                isinstance(current_value, bool)
+                and isinstance(proposed_value, bool)
+                and current_value == proposed_value
+            )
+
+        # Numbers
+        if (
+            isinstance(current_value, (int, float))
+            and isinstance(proposed_value, (int, float))
+        ):
+            return current_value == proposed_value
+
+        # Lists
+        if (
+            isinstance(current_value, list)
+            and isinstance(proposed_value, list)
+            and all(
+                isinstance(item, str)
+                for item in current_value
+            )
+            and all(
+                isinstance(item, str)
+                for item in proposed_value
+            )
+        ):
+            current_normalized = sorted(
+                item.strip().casefold()
+                for item in current_value
+            )
+
+            proposed_normalized = sorted(
+                item.strip().casefold()
+                for item in proposed_value
+            )
+
+            return (
+                current_normalized
+                == proposed_normalized
+            )
+
+        return (
+            type(current_value)
+            is type(proposed_value)
+            and current_value == proposed_value
+        )
+
+def plan_profile_merge(
     *,
     current_data: dict[str, Any],
     updates: list[ProfileFieldUpdate],
-) -> dict[str, Any]:
+) -> ProfileMergePlan:
+
+    validated_updates = validate_profile_updates(
+        updates
+    )
     candidate_data = dict(current_data)
 
-    for update in updates:
-        validated_update = (
-            validate_and_normalize_update(update)
+    accepted_updates: list[
+        ProfileFieldUpdate
+    ] = []
+
+    conflicts: list[
+        ProfileConflict
+    ] = []
+
+    unchanged_fields: list[
+        ProfileField
+    ] = []
+
+
+    for update in validated_updates:
+        key = update.field.value
+        # Accepting the Change
+        if key not in current_data:
+            accepted_updates.append(update)
+            candidate_data[key] = update.value
+            continue
+
+        current_value = current_data[key]
+
+        # Un Changing
+        if _values_equivalent(
+            current_value,
+            update.value,
+        ):
+            unchanged_fields.append(
+                update.field
+            )
+            continue
+
+        # Conflict
+        conflicts.append(
+            ProfileConflict(
+                field=update.field,
+                current_value=current_value,
+                proposed_value=update.value,
+            )
         )
 
-        candidate_data[
-            validated_update.field.value
-        ] = validated_update.value
-
-    return candidate_data
+    return ProfileMergePlan(
+        accepted_updates=accepted_updates,
+        conflicts=conflicts,
+        unchanged_fields=unchanged_fields,
+        candidate_profile_data=candidate_data,
+    )

@@ -7,8 +7,8 @@ from app.schemas.intake import (
 )
 from app.services.intake_profile import (
     ProfileValueValidationError,
-    build_candidate_profile_data,
     validate_and_normalize_update,
+    plan_profile_merge,
 )
 
 
@@ -96,7 +96,7 @@ def test_text_list_is_normalized():
     ]
 
 
-def test_candidate_merge_does_not_mutate_current_data():
+def test_merge_accepts_new_field_without_mutating_current_data():
     current_data = {
         "target_country": "Egypt",
     }
@@ -106,7 +106,7 @@ def test_candidate_merge_does_not_mutate_current_data():
         value=300000,
     )
 
-    candidate = build_candidate_profile_data(
+    plan = plan_profile_merge(
         current_data=current_data,
         updates=[update],
     )
@@ -115,7 +115,138 @@ def test_candidate_merge_does_not_mutate_current_data():
         "target_country": "Egypt",
     }
 
-    assert candidate == {
+    assert plan.candidate_profile_data == {
         "target_country": "Egypt",
+        "budget": 300000,
+    }
+
+    assert plan.accepted_updates == [
+        update
+    ]
+
+    assert plan.conflicts == []
+
+
+def test_same_value_is_unchanged_not_conflict():
+    current_data = {
+        "target_city": "Cairo",
+    }
+
+    update = make_update(
+        field=ProfileField.TARGET_CITY,
+        value=" cairo ",
+    )
+
+    plan = plan_profile_merge(
+        current_data=current_data,
+        updates=[update],
+    )
+
+    assert plan.conflicts == []
+
+    assert plan.accepted_updates == []
+
+    assert plan.unchanged_fields == [
+        ProfileField.TARGET_CITY
+    ]
+
+    assert plan.candidate_profile_data == {
+        "target_city": "Cairo",
+    }
+
+
+def test_changed_existing_value_creates_conflict():
+    current_data = {
+        "target_city": "Cairo",
+    }
+
+    update = make_update(
+        field=ProfileField.TARGET_CITY,
+        value="Alexandria",
+    )
+
+    plan = plan_profile_merge(
+        current_data=current_data,
+        updates=[update],
+    )
+
+    assert plan.accepted_updates == []
+
+    assert len(plan.conflicts) == 1
+
+    conflict = plan.conflicts[0]
+
+    assert (
+        conflict.field
+        == ProfileField.TARGET_CITY
+    )
+
+    assert conflict.current_value == "Cairo"
+    assert conflict.proposed_value == "Alexandria"
+
+    assert plan.candidate_profile_data == {
+        "target_city": "Cairo",
+    }
+
+def test_list_order_does_not_create_false_conflict():
+    current_data = {
+        "target_customers": [
+            "Personal Trainers",
+            "Gym Members",
+        ]
+    }
+
+    update = make_update(
+        field=ProfileField.TARGET_CUSTOMERS,
+        value=[
+            "gym members",
+            "personal trainers",
+        ],
+    )
+
+    plan = plan_profile_merge(
+        current_data=current_data,
+        updates=[update],
+    )
+
+    assert plan.conflicts == []
+
+    assert plan.unchanged_fields == [
+        ProfileField.TARGET_CUSTOMERS
+    ]
+
+
+def test_merge_accepts_safe_updates_and_preserves_conflicts():
+    current_data = {
+        "target_city": "Cairo",
+    }
+
+    updates = [
+        make_update(
+            field=ProfileField.TARGET_CITY,
+            value="Alexandria",
+        ),
+        make_update(
+            field=ProfileField.BUDGET,
+            value=300000,
+        ),
+    ]
+
+    plan = plan_profile_merge(
+        current_data=current_data,
+        updates=updates,
+    )
+
+    assert len(plan.conflicts) == 1
+
+    assert [
+        update.field
+        for update in plan.accepted_updates
+    ] == [
+        ProfileField.BUDGET
+    ]
+
+    assert plan.candidate_profile_data == {
+        "target_city": "Cairo",
         "budget": 300000,
     }
