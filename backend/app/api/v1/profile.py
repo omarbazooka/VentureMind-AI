@@ -1,22 +1,71 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    status,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.idea import Idea
 from app.models.idea_profile import IdeaProfile
-from app.schemas.profile import IdeaProfileResponse, IdeaProfileUpdate
+from app.schemas.intake import (
+    IntakeProvenance,
+    ProfileFieldUpdate,
+)
+from app.schemas.profile import (
+    IdeaProfileResponse,
+    IdeaProfileUpdate,
+)
+from app.services.intake_profile import (
+    ProfileValueValidationError,
+    persist_profile_merge_plan,
+    plan_profile_merge,
+)
 
 
 router = APIRouter(
-    prefix= "/ideas",
-    tags=["profile"]
+    prefix="/ideas",
+    tags=["profile"],
 )
 
-DbSession = Annotated[Session, Depends(get_db)]
+DbSession = Annotated[
+    Session,
+    Depends(get_db),
+]
+
+
+def _get_latest_profile(
+    *,
+    db: Session,
+    idea_id: UUID,
+) -> IdeaProfile | None:
+    statement = (
+        select(IdeaProfile)
+        .where(IdeaProfile.idea_id == idea_id)
+        .order_by(IdeaProfile.version.desc())
+        .limit(1)
+    )
+
+    return db.scalar(statement)
+
+
+def _to_response(
+    profile: IdeaProfile,
+) -> IdeaProfileResponse:
+    return IdeaProfileResponse(
+        idea_id=profile.idea_id,
+        version=profile.version,
+        readiness=profile.readiness,
+        profile_data=profile.profile_data,
+        profile_metadata=profile.profile_metadata or {},
+        unknown_fields=profile.unknown_fields or [],
+    )
+
 
 @router.get(
     "/{idea_id}/profile",
@@ -31,17 +80,13 @@ def get_profile(
     if idea is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="idea nnot found",
+            detail="Idea not found",
         )
 
-    statement = (
-        select(IdeaProfile)
-        .where(IdeaProfile.idea_id == idea_id)
-        .order_by(IdeaProfile.version.desc())
-        .limit(1)
+    profile = _get_latest_profile(
+        db=db,
+        idea_id=idea_id,
     )
-
-    profile = db.scalar(statement)
 
     if profile is None:
         raise HTTPException(
@@ -49,16 +94,9 @@ def get_profile(
             detail="Idea profile not found",
         )
 
-    return IdeaProfileResponse(
-        idea_id=profile.idea_id,
-        version=profile.version,
-        readiness=profile.readiness,
-        profile_data=profile.profile_data,
-    )
+    return _to_response(profile)
 
 
-
-# Update without delete the old profile data
 @router.patch(
     "/{idea_id}/profile",
     response_model=IdeaProfileResponse,
@@ -76,57 +114,61 @@ def update_profile(
             detail="Idea not found",
         )
 
-    statement = (
-        select(IdeaProfile)
-        .where(IdeaProfile.idea_id == idea_id)
-        .order_by(IdeaProfile.version.desc())
-        .limit(1)
+    current_profile = _get_latest_profile(
+        db=db,
+        idea_id=idea_id,
     )
-
-    current_profile = db.scalar(statement)
 
     if current_profile is None:
-        current_data = {}
-        next_version = 1
-    else:
-        current_data = current_profile.profile_data
-        next_version = current_profile.version + 1
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Idea profile not found",
+        )
 
-    # merge current and update in one profile data:
-    # current_data = {
-    #     "country": "Egypt",
-    #     "industry": "Restaurants",
-    # }
-    # payload.profile_data = {
-    #     "budget": 300000,
-    # }
-    # 
-    #
-    # {
-    # "country": "Egypt",
-    # "industry": "Restaurants",
-    # "budget": 300000,
-    # }
+    updates = [
+        ProfileFieldUpdate(
+            field=field,
+            value=value,
+            provenance=IntakeProvenance.USER,
+            confidence=1.0,
+        )
+        for field, value in payload.profile_data.items()
+    ]
 
-    new_profile_data = {
-        **current_data,
-        **payload.profile_data,
-    }
+    try:
+        merge_plan = plan_profile_merge(
+            current_data=current_profile.profile_data,
+            updates=updates,
+        )
+    except ProfileValueValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
-    new_profile = IdeaProfile(
+    if merge_plan.conflicts:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "Profile update conflicts with the current profile"
+                ),
+                "conflicts": [
+                    conflict.model_dump(mode="json")
+                    for conflict in merge_plan.conflicts
+                ],
+            },
+        )
+
+    profile = persist_profile_merge_plan(
+        db=db,
         idea_id=idea_id,
-        version=next_version,
-        readiness="NOT_READY",
-        profile_data=new_profile_data,
+        current_profile=current_profile,
+        merge_plan=merge_plan,
     )
 
-    db.add(new_profile)
-    db.commit()
-    db.refresh(new_profile)
+    if profile is not current_profile:
+        db.commit()
+        db.refresh(profile)
 
-    return IdeaProfileResponse(
-        idea_id=new_profile.idea_id,
-        version=new_profile.version,
-        readiness=new_profile.readiness,
-        profile_data=new_profile.profile_data,
-    )
+    return _to_response(profile)
