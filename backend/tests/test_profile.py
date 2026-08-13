@@ -6,46 +6,40 @@ def create_test_idea(client) -> str:
             "description": "An idea used to test structured profile persistence.",
         },
     )
-
     assert response.status_code == 201
-
     return response.json()["id"]
 
 
-def test_profile_versioning(client):
+def test_profile_versioning_and_metadata(client):
     idea_id = create_test_idea(client)
 
-    initial_response = client.get(
+    initial = client.get(
         f"/api/v1/ideas/{idea_id}/profile"
     )
+    assert initial.status_code == 200
+    assert initial.json()["version"] == 1
+    assert initial.json()["profile_data"] == {}
+    assert initial.json()["profile_metadata"] == {}
+    assert initial.json()["unknown_fields"] == []
 
-    assert initial_response.status_code == 200
-
-    initial_profile = initial_response.json()
-
-    assert initial_profile["version"] == 1
-    assert initial_profile["readiness"] == "NOT_READY"
-    assert initial_profile["profile_data"] == {}
-
-    country_response = client.patch(
+    country = client.patch(
         f"/api/v1/ideas/{idea_id}/profile",
-        json={
-            "profile_data": {
-                "target_country": "Egypt"
-            }
-        },
+        json={"profile_data": {"target_country": "Egypt"}},
     )
-
-    assert country_response.status_code == 200
-
-    country_profile = country_response.json()
-
-    assert country_profile["version"] == 2
-    assert country_profile["profile_data"] == {
+    assert country.status_code == 200
+    assert country.json()["version"] == 2
+    assert country.json()["profile_data"] == {
         "target_country": "Egypt"
     }
+    metadata = country.json()["profile_metadata"][
+        "target_country"
+    ]
+    assert metadata["provenance"] == "USER"
+    assert metadata["value_kind"] == "FACT"
+    assert metadata["confidence"] == 1.0
+    assert metadata["source_message_id"] is None
 
-    budget_response = client.patch(
+    budget = client.patch(
         f"/api/v1/ideas/{idea_id}/profile",
         json={
             "profile_data": {
@@ -54,22 +48,116 @@ def test_profile_versioning(client):
             }
         },
     )
-
-    assert budget_response.status_code == 200
-
-    updated_profile = budget_response.json()
-
-    assert updated_profile["version"] == 3
-
-    assert updated_profile["profile_data"] == {
+    assert budget.status_code == 200
+    assert budget.json()["version"] == 3
+    assert budget.json()["profile_data"] == {
         "target_country": "Egypt",
         "budget": 300000,
         "currency": "EGP",
     }
+    assert set(budget.json()["profile_metadata"]) == {
+        "target_country",
+        "budget",
+        "currency",
+    }
 
-    current_response = client.get(
-        f"/api/v1/ideas/{idea_id}/profile"
+
+def test_profile_conflict_does_not_overwrite(client):
+    idea_id = create_test_idea(client)
+
+    first = client.patch(
+        f"/api/v1/ideas/{idea_id}/profile",
+        json={"profile_data": {"target_city": "Cairo"}},
     )
+    assert first.status_code == 200
+    assert first.json()["version"] == 2
 
-    assert current_response.status_code == 200
-    assert current_response.json()["version"] == 3
+    conflict = client.patch(
+        f"/api/v1/ideas/{idea_id}/profile",
+        json={"profile_data": {"target_city": "Alexandria"}},
+    )
+    assert conflict.status_code == 409
+
+    current = client.get(
+        f"/api/v1/ideas/{idea_id}/profile"
+    ).json()
+    assert current["version"] == 2
+    assert current["profile_data"] == {"target_city": "Cairo"}
+
+
+def test_equivalent_value_does_not_create_version(client):
+    idea_id = create_test_idea(client)
+
+    first = client.patch(
+        f"/api/v1/ideas/{idea_id}/profile",
+        json={"profile_data": {"target_city": "Cairo"}},
+    )
+    assert first.status_code == 200
+    assert first.json()["version"] == 2
+
+    repeated = client.patch(
+        f"/api/v1/ideas/{idea_id}/profile",
+        json={"profile_data": {"target_city": " cairo "}},
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["version"] == 2
+    assert repeated.json()["profile_data"]["target_city"] == "Cairo"
+
+
+def test_profile_rejects_unsupported_field(client):
+    idea_id = create_test_idea(client)
+
+    response = client.patch(
+        f"/api/v1/ideas/{idea_id}/profile",
+        json={"profile_data": {"favorite_color": "Blue"}},
+    )
+    assert response.status_code == 422
+
+    current = client.get(
+        f"/api/v1/ideas/{idea_id}/profile"
+    ).json()
+    assert current["version"] == 1
+    assert current["profile_data"] == {}
+
+
+def test_profile_rejects_invalid_budget(client):
+    idea_id = create_test_idea(client)
+
+    response = client.patch(
+        f"/api/v1/ideas/{idea_id}/profile",
+        json={"profile_data": {"budget": "a lot"}},
+    )
+    assert response.status_code == 422
+
+    current = client.get(
+        f"/api/v1/ideas/{idea_id}/profile"
+    ).json()
+    assert current["version"] == 1
+    assert current["profile_data"] == {}
+
+
+def test_conflicting_patch_is_atomic(client):
+    idea_id = create_test_idea(client)
+
+    first = client.patch(
+        f"/api/v1/ideas/{idea_id}/profile",
+        json={"profile_data": {"target_city": "Cairo"}},
+    )
+    assert first.status_code == 200
+
+    conflict = client.patch(
+        f"/api/v1/ideas/{idea_id}/profile",
+        json={
+            "profile_data": {
+                "target_city": "Alexandria",
+                "budget": 300000,
+            }
+        },
+    )
+    assert conflict.status_code == 409
+
+    current = client.get(
+        f"/api/v1/ideas/{idea_id}/profile"
+    ).json()
+    assert current["version"] == 2
+    assert current["profile_data"] == {"target_city": "Cairo"}
