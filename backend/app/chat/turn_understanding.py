@@ -1,9 +1,10 @@
-from app.core.config import settings
-from app.llm.gateway import LLMGateway
-from app.schemas.turn import Intent, TurnUnderstanding
 import json
 
 from app.chat.context import WorkingContext
+from app.core.config import settings
+from app.llm.gateway import LLMGateway
+from app.schemas.turn import Intent, TurnUnderstanding
+
 
 def build_turn_understanding_system_prompt() -> str:
     allowed_intents = ", ".join(
@@ -43,16 +44,13 @@ def build_turn_understanding_system_prompt() -> str:
                 16. NEW_IDEA means the user is explicitly introducing or starting a
                     different business idea. Do not use NEW_IDEA merely because the user
                     provides a new fact about the active venture.
-
                 17. When the user provides business facts or answers about the active
                     venture, prefer ANSWER_CLARIFICATION unless another explicit action
                     intent clearly applies.
-
                 18. If the user contradicts, retracts, or cancels a state-changing
                     instruction within the same message, do not assume that both mutations
                     should execute. Set clarification_needed to true rather than silently
                     choosing or sequencing conflicting state changes.
-
                 19. Never treat confidence as permission to execute an action.
                     Confidence only represents how certain you are about your interpretation.
             """.strip()
@@ -98,26 +96,28 @@ class TurnUnderstandingService:
             or settings.turn_understanding_model
         )
 
-def understand(
-    self,
-    user_message: str,
-    context: WorkingContext,
-) -> TurnUnderstanding:
-    cleaned_message = user_message.strip()
+    def understand(
+        self,
+        user_message: str,
+        context: WorkingContext,
+    ) -> TurnUnderstanding:
+        cleaned_message = user_message.strip()
 
-    if not cleaned_message:
-        raise ValueError(
-            "user_message cannot be empty"
+        if not cleaned_message:
+            raise ValueError(
+                "user_message cannot be empty"
+            )
+
+        user_prompt = build_turn_understanding_user_prompt(
+            user_message=cleaned_message,
+            context=context,
         )
 
-    user_prompt = build_turn_understanding_user_prompt(
-        user_message=cleaned_message,
-        context=context,
-    )
-
-    return self._gateway.generate_structured(
-        model=self._model,
-        system_prompt=build_turn_understanding_system_prompt(),
-        user_prompt=user_prompt,
-        response_model=TurnUnderstanding,
-    )
+        return self._gateway.generate_structured(
+            model=self._model,
+            system_prompt=(
+                build_turn_understanding_system_prompt()
+            ),
+            user_prompt=user_prompt,
+            response_model=TurnUnderstanding,
+        )
