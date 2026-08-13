@@ -40,6 +40,8 @@ def create_idea(
         version=1,
         readiness="NOT_READY",
         profile_data={},
+        profile_metadata={},
+        unknown_fields=[],
     )
 
     db.add(chat_session)

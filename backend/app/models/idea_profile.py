@@ -46,6 +46,22 @@ class IdeaProfile(Base):
         nullable=False,
         default=dict,
     )
+
+    profile_metadata: Mapped[
+        dict[str, dict[str, Any]]
+    ] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+    )
+
+
+    unknown_fields: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+    )
+
     
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

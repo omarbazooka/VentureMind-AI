@@ -1,5 +1,6 @@
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -46,7 +47,21 @@ class ProfileField(StrEnum):
     CURRENT_STAGE = "current_stage"
     USER_GOAL = "user_goal"
 
+class ProfileFieldMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
+    provenance: IntakeProvenance
+
+    value_kind: ProfileValueKind
+
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+    )
+
+    source_message_id: UUID | None = None
+
+    
 ProfileValue = (
     str
     | int
