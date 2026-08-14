@@ -10,6 +10,9 @@ from app.schemas.intake import (
     ProfileFieldMetadata,
     ProfileFieldUpdate,
     ProfileMergePlan,
+    IntakeProvenance,
+    ProfileReadinessResult,
+    ProfileReadinessStatus, 
 )
 
 
@@ -47,6 +50,36 @@ BOOLEAN_OR_TEXT_FIELDS = {
 NUMBER_FIELDS = {
     ProfileField.BUDGET,
 }
+
+DIRECT_CRITICAL_FIELDS = (
+    ProfileField.TARGET_CUSTOMERS,
+    ProfileField.TARGET_COUNTRY,
+)
+
+
+CORE_IDEA_FIELDS = (
+    ProfileField.IDEA_DESCRIPTION,
+    ProfileField.PROBLEM,
+    ProfileField.PROPOSED_SOLUTION,
+)
+
+
+OPTIONAL_PROFILE_FIELDS = (
+    ProfileField.IDEA_NAME,
+    ProfileField.INDUSTRY,
+    ProfileField.BUSINESS_TYPE,
+    ProfileField.CUSTOMER_TYPE,
+    ProfileField.TARGET_CITY,
+    ProfileField.BUDGET,
+    ProfileField.CURRENCY,
+    ProfileField.REVENUE_MODEL,
+    ProfileField.FOUNDER_EXPERIENCE,
+    ProfileField.EXISTING_TEAM,
+    ProfileField.LAUNCH_TIMELINE,
+    ProfileField.KNOWN_COMPETITORS,
+    ProfileField.CURRENT_STAGE,
+    ProfileField.USER_GOAL,
+)
 
 
 def _normalize_text(
@@ -308,10 +341,22 @@ def persist_profile_merge_plan(
         if field_name not in accepted_field_names
     ]
 
+    readiness_result = (
+        evaluate_profile_readiness(
+            profile_data=(
+                merge_plan.candidate_profile_data
+            ),
+            profile_metadata=next_metadata,
+            unknown_fields=next_unknown_fields,
+        )
+    )
+
     new_profile = IdeaProfile(
         idea_id=idea_id,
         version=current_profile.version + 1,
-        readiness=current_profile.readiness,
+        readiness=(
+            readiness_result.readiness.value
+        ),
         profile_data=dict(
             merge_plan.candidate_profile_data
         ),
@@ -323,3 +368,154 @@ def persist_profile_merge_plan(
     db.flush()
 
     return new_profile
+
+
+def _has_user_grounded_value(
+    *,
+    field: ProfileField,
+    profile_data: dict[str, Any],
+    profile_metadata: dict[
+        str,
+        dict[str, Any],
+    ],
+    unknown_field_names: set[str],
+) -> bool:
+    field_name = field.value
+
+    if field_name in unknown_field_names:
+        return False
+
+    if field_name not in profile_data:
+        return False
+
+    metadata = profile_metadata.get(
+        field_name
+    )
+
+    if metadata is None:
+        return False
+
+    provenance = metadata.get(
+        "provenance"
+    )
+
+    return provenance in {
+        IntakeProvenance.USER,
+        IntakeProvenance.USER.value,
+    }
+
+
+def evaluate_profile_readiness(
+    *,
+    profile_data: dict[str, Any],
+    profile_metadata: dict[
+        str,
+        dict[str, Any],
+    ],
+    unknown_fields: list[str],
+) -> ProfileReadinessResult:
+    unknown_field_names = set(
+        unknown_fields
+    )
+
+    missing_critical_fields: list[
+        ProfileField
+    ] = []
+
+    unknown_critical_fields: list[
+        ProfileField
+    ] = []
+
+    has_idea_description = (
+        _has_user_grounded_value(
+            field=ProfileField.IDEA_DESCRIPTION,
+            profile_data=profile_data,
+            profile_metadata=profile_metadata,
+            unknown_field_names=unknown_field_names,
+        )
+    )
+
+    has_problem = (
+        _has_user_grounded_value(
+            field=ProfileField.PROBLEM,
+            profile_data=profile_data,
+            profile_metadata=profile_metadata,
+            unknown_field_names=unknown_field_names,
+        )
+    )
+
+    has_solution = (
+        _has_user_grounded_value(
+            field=ProfileField.PROPOSED_SOLUTION,
+            profile_data=profile_data,
+            profile_metadata=profile_metadata,
+            unknown_field_names=unknown_field_names,
+        )
+    )
+
+    core_idea_ready = (
+        has_idea_description
+        or (
+            has_problem
+            and has_solution
+        )
+    )
+
+    if not core_idea_ready:
+        missing_critical_fields.append(
+            ProfileField.IDEA_DESCRIPTION
+        )
+
+        for field in CORE_IDEA_FIELDS:
+            if field.value in unknown_field_names:
+                unknown_critical_fields.append(
+                    field
+                )
+
+    for field in DIRECT_CRITICAL_FIELDS:
+        if _has_user_grounded_value(
+            field=field,
+            profile_data=profile_data,
+            profile_metadata=profile_metadata,
+            unknown_field_names=unknown_field_names,
+        ):
+            continue
+
+        missing_critical_fields.append(
+            field
+        )
+
+        if field.value in unknown_field_names:
+            unknown_critical_fields.append(
+                field
+            )
+
+    missing_optional_fields = [
+        field
+        for field in OPTIONAL_PROFILE_FIELDS
+        if (
+            field.value
+            not in profile_data
+            and field.value
+            not in unknown_field_names
+        )
+    ]
+
+    readiness = (
+        ProfileReadinessStatus.READY_FOR_ANALYSIS
+        if not missing_critical_fields
+        else ProfileReadinessStatus.NOT_READY
+    )
+
+    return ProfileReadinessResult(
+        readiness=readiness,
+        missing_critical_fields=(
+            missing_critical_fields
+        ),
+        missing_optional_fields=(
+            missing_optional_fields
+        ),
+        unknown_critical_fields=(
+            unknown_critical_fields
+        ),
+    )

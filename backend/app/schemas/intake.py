@@ -126,6 +126,35 @@ class IntakeExtraction(BaseModel): # obj to take one or more ProfileFieldUpdate 
         default_factory=list,
     )
 
+
+class ProfileReadinessStatus(StrEnum):
+    NOT_READY = "NOT_READY"
+    READY_FOR_ANALYSIS = "READY_FOR_ANALYSIS"
+
+
+class ProfileReadinessResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")        
+    readiness: ProfileReadinessStatus
+
+    missing_critical_fields: list[
+        ProfileField
+    ] = Field(
+        default_factory=list,
+    )
+
+    missing_optional_fields: list[
+        ProfileField
+    ] = Field(
+        default_factory=list,
+    )
+
+    unknown_critical_fields: list[
+        ProfileField
+    ] = Field(
+        default_factory=list,
+    )
+
+    
     # Gaurdrails To prevent duplicate field in ProfileField like : 
     # in same Time:
 

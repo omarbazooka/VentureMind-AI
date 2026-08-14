@@ -161,3 +161,59 @@ def test_conflicting_patch_is_atomic(client):
     ).json()
     assert current["version"] == 2
     assert current["profile_data"] == {"target_city": "Cairo"}
+
+
+def test_profile_becomes_ready_when_minimum_fields_exist(
+    client,
+):
+    idea_id = create_test_idea(client)
+
+    description = client.patch(
+        f"/api/v1/ideas/{idea_id}/profile",
+        json={
+            "profile_data": {
+                "idea_description": (
+                    "A subscription meal service"
+                )
+            }
+        },
+    )
+
+    assert description.status_code == 200
+    assert (
+        description.json()["readiness"]
+        == "NOT_READY"
+    )
+
+    customers = client.patch(
+        f"/api/v1/ideas/{idea_id}/profile",
+        json={
+            "profile_data": {
+                "target_customers": (
+                    "Busy professionals"
+                )
+            }
+        },
+    )
+
+    assert customers.status_code == 200
+    assert (
+        customers.json()["readiness"]
+        == "NOT_READY"
+    )
+
+    country = client.patch(
+        f"/api/v1/ideas/{idea_id}/profile",
+        json={
+            "profile_data": {
+                "target_country": "Egypt"
+            }
+        },
+    )
+
+    assert country.status_code == 200
+
+    assert (
+        country.json()["readiness"]
+        == "READY_FOR_ANALYSIS"
+    )

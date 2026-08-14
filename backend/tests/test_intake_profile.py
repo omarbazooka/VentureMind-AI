@@ -3,12 +3,16 @@ import pytest
 from app.schemas.intake import (
     IntakeProvenance,
     ProfileField,
+    ProfileFieldMetadata,
     ProfileFieldUpdate,
+    ProfileReadinessStatus,
+    ProfileValueKind,
 )
 from app.services.intake_profile import (
     ProfileValueValidationError,
-    validate_and_normalize_update,
+    evaluate_profile_readiness,
     plan_profile_merge,
+    validate_and_normalize_update,
 )
 
 
@@ -250,3 +254,171 @@ def test_merge_accepts_safe_updates_and_preserves_conflicts():
         "target_city": "Cairo",
         "budget": 300000,
     }
+
+def make_metadata(
+    *,
+    provenance: IntakeProvenance = (
+        IntakeProvenance.USER
+    ),
+) -> dict:
+    return ProfileFieldMetadata(
+        provenance=provenance,
+        value_kind=ProfileValueKind.FACT,
+        confidence=0.95,
+    ).model_dump(
+        mode="json"
+    )
+
+def test_empty_profile_is_not_ready():
+    result = evaluate_profile_readiness(
+        profile_data={},
+        profile_metadata={},
+        unknown_fields=[],
+    )
+
+    assert (
+        result.readiness
+        == ProfileReadinessStatus.NOT_READY
+    )
+
+    assert result.missing_critical_fields == [
+        ProfileField.IDEA_DESCRIPTION,
+        ProfileField.TARGET_CUSTOMERS,
+        ProfileField.TARGET_COUNTRY,
+    ]
+
+
+def test_minimum_grounded_profile_is_ready():
+    profile_data = {
+        "idea_description": (
+            "A meal subscription service "
+            "for diabetic adults"
+        ),
+        "target_customers": (
+            "Adults with type 2 diabetes"
+        ),
+        "target_country": "Egypt",
+    }
+
+    profile_metadata = {
+        field_name: make_metadata()
+        for field_name
+        in profile_data
+    }
+
+    result = evaluate_profile_readiness(
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[],
+    )
+
+    assert (
+        result.readiness
+        == (
+            ProfileReadinessStatus
+            .READY_FOR_ANALYSIS
+        )
+    )
+
+    assert (
+        result.missing_critical_fields
+        == []
+    )
+
+
+def test_problem_and_solution_satisfy_core_idea():
+    profile_data = {
+        "problem": (
+            "Restaurants waste surplus food"
+        ),
+        "proposed_solution": (
+            "A marketplace for discounted "
+            "surplus meals"
+        ),
+        "target_customers": (
+            "Budget-conscious consumers"
+        ),
+        "target_country": "Egypt",
+    }
+
+    profile_metadata = {
+        field_name: make_metadata()
+        for field_name
+        in profile_data
+    }
+
+    result = evaluate_profile_readiness(
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[],
+    )
+
+    assert (
+        result.readiness
+        == (
+            ProfileReadinessStatus
+            .READY_FOR_ANALYSIS
+        )
+    )
+
+def test_ai_assumption_cannot_force_readiness():
+    profile_data = {
+        "idea_description": "Delivery app",
+        "target_customers": "Students",
+        "target_country": "Egypt",
+    }
+
+    profile_metadata = {
+        "idea_description": make_metadata(),
+        "target_customers": make_metadata(),
+        "target_country": make_metadata(
+            provenance=(
+                IntakeProvenance.AI_ASSUMPTION
+            )
+        ),
+    }
+
+    result = evaluate_profile_readiness(
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[],
+    )
+
+    assert (
+        result.readiness
+        == ProfileReadinessStatus.NOT_READY
+    )
+
+    assert (
+        ProfileField.TARGET_COUNTRY
+        in result.missing_critical_fields
+    )
+
+def test_unknown_critical_field_blocks_readiness():
+    profile_data = {
+        "idea_description": "Delivery app",
+        "target_customers": "Students",
+    }
+
+    profile_metadata = {
+        "idea_description": make_metadata(),
+        "target_customers": make_metadata(),
+    }
+
+    result = evaluate_profile_readiness(
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[
+            "target_country",
+        ],
+    )
+
+    assert (
+        result.readiness
+        == ProfileReadinessStatus.NOT_READY
+    )
+
+    assert (
+        ProfileField.TARGET_COUNTRY
+        in result.unknown_critical_fields
+    )
