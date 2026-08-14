@@ -159,3 +159,15 @@ class ProfileReadinessResult(BaseModel):
     unknown_critical_fields: list[ProfileField] = Field(
         default_factory=list,
     )
+
+
+class ClarificationQuestion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field: ProfileField
+
+    question: str = Field(
+        min_length=1,
+    )
+
+    is_assumption_prompt: bool = False

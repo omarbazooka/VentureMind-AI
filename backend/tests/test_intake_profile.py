@@ -7,12 +7,14 @@ from app.schemas.intake import (
     ProfileFieldUpdate,
     ProfileReadinessStatus,
     ProfileValueKind,
+    ClarificationQuestion,
 )
 from app.services.intake_profile import (
     ProfileValueValidationError,
     evaluate_profile_readiness,
     plan_profile_merge,
     validate_and_normalize_update,
+    select_next_clarification_question,
 )
 
 
@@ -422,3 +424,287 @@ def test_unknown_critical_field_blocks_readiness():
         ProfileField.TARGET_COUNTRY
         in result.unknown_critical_fields
     )
+
+
+def test_empty_profile_asks_for_core_idea_first():
+    readiness = evaluate_profile_readiness(
+        profile_data={},
+        profile_metadata={},
+        unknown_fields=[],
+    )
+
+    question = (
+        select_next_clarification_question(
+            readiness_result=readiness,
+            profile_data={},
+            profile_metadata={},
+            unknown_fields=[],
+        )
+    )
+
+    assert question is not None
+
+    assert (
+        question.field
+        == ProfileField.IDEA_DESCRIPTION
+    )
+
+    assert (
+        question.is_assumption_prompt
+        is False
+    )
+
+def test_known_problem_asks_for_solution():
+    profile_data = {
+        "problem": (
+            "Restaurants waste surplus food"
+        )
+    }
+
+    profile_metadata = {
+        "problem": make_metadata(),
+    }
+
+    readiness = evaluate_profile_readiness(
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[],
+    )
+
+    question = (
+        select_next_clarification_question(
+            readiness_result=readiness,
+            profile_data=profile_data,
+            profile_metadata=profile_metadata,
+            unknown_fields=[],
+        )
+    )
+
+    assert question is not None
+
+    assert (
+        question.field
+        == ProfileField.PROPOSED_SOLUTION
+    )
+
+def test_known_solution_asks_for_problem():
+    profile_data = {
+        "proposed_solution": (
+            "A marketplace for surplus meals"
+        )
+    }
+
+    profile_metadata = {
+        "proposed_solution": (
+            make_metadata()
+        ),
+    }
+
+    readiness = evaluate_profile_readiness(
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[],
+    )
+
+    question = (
+        select_next_clarification_question(
+            readiness_result=readiness,
+            profile_data=profile_data,
+            profile_metadata=profile_metadata,
+            unknown_fields=[],
+        )
+    )
+
+    assert question is not None
+
+    assert (
+        question.field
+        == ProfileField.PROBLEM
+    )
+
+def test_core_idea_then_asks_target_customers():
+    profile_data = {
+        "idea_description": (
+            "A subscription meal service"
+        ),
+    }
+
+    profile_metadata = {
+        "idea_description": make_metadata(),
+    }
+
+    readiness = evaluate_profile_readiness(
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[],
+    )
+
+    question = (
+        select_next_clarification_question(
+            readiness_result=readiness,
+            profile_data=profile_data,
+            profile_metadata=profile_metadata,
+            unknown_fields=[],
+        )
+    )
+
+    assert question is not None
+
+    assert (
+        question.field
+        == ProfileField.TARGET_CUSTOMERS
+    )
+
+
+def test_customer_known_then_asks_country():
+    profile_data = {
+        "idea_description": (
+            "A subscription meal service"
+        ),
+        "target_customers": (
+            "Busy professionals"
+        ),
+    }
+
+    profile_metadata = {
+        field_name: make_metadata()
+        for field_name in profile_data
+    }
+
+    readiness = evaluate_profile_readiness(
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[],
+    )
+
+    question = (
+        select_next_clarification_question(
+            readiness_result=readiness,
+            profile_data=profile_data,
+            profile_metadata=profile_metadata,
+            unknown_fields=[],
+        )
+    )
+
+    assert question is not None
+
+    assert (
+        question.field
+        == ProfileField.TARGET_COUNTRY
+    )
+
+def test_unknown_field_does_not_get_immediately_reasked():
+    profile_data = {
+        "idea_description": (
+            "A subscription meal service"
+        ),
+    }
+
+    profile_metadata = {
+        "idea_description": make_metadata(),
+    }
+
+    unknown_fields = [
+        "target_customers",
+    ]
+
+    readiness = evaluate_profile_readiness(
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=unknown_fields,
+    )
+
+    question = (
+        select_next_clarification_question(
+            readiness_result=readiness,
+            profile_data=profile_data,
+            profile_metadata=profile_metadata,
+            unknown_fields=unknown_fields,
+        )
+    )
+
+    assert question is not None
+
+    assert (
+        question.field
+        == ProfileField.TARGET_COUNTRY
+    )
+
+    assert (
+        question.is_assumption_prompt
+        is False
+    )
+
+def test_unknown_remaining_field_offers_assumption():
+    profile_data = {
+        "idea_description": (
+            "A subscription meal service"
+        ),
+        "target_country": "Egypt",
+    }
+
+    profile_metadata = {
+        field_name: make_metadata()
+        for field_name in profile_data
+    }
+
+    unknown_fields = [
+        "target_customers",
+    ]
+
+    readiness = evaluate_profile_readiness(
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=unknown_fields,
+    )
+
+    question = (
+        select_next_clarification_question(
+            readiness_result=readiness,
+            profile_data=profile_data,
+            profile_metadata=profile_metadata,
+            unknown_fields=unknown_fields,
+        )
+    )
+
+    assert question is not None
+
+    assert (
+        question.field
+        == ProfileField.TARGET_CUSTOMERS
+    )
+
+    assert (
+        question.is_assumption_prompt
+        is True
+    )
+
+
+def test_ready_profile_has_no_next_question():
+    profile_data = {
+        "idea_description": "Delivery app",
+        "target_customers": "Students",
+        "target_country": "Egypt",
+    }
+
+    profile_metadata = {
+        field_name: make_metadata()
+        for field_name in profile_data
+    }
+
+    readiness = evaluate_profile_readiness(
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[],
+    )
+
+    question = (
+        select_next_clarification_question(
+            readiness_result=readiness,
+            profile_data=profile_data,
+            profile_metadata=profile_metadata,
+            unknown_fields=[],
+        )
+    )
+
+    assert question is None
