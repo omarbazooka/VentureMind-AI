@@ -1,11 +1,12 @@
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_validator,
     model_validator,
 )
 
@@ -161,6 +162,74 @@ class ProfileReadinessResult(BaseModel):
     )
 
 
+class ClarificationTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field: ProfileField
+    is_assumption_prompt: bool = False
+
+class ClarificationDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(
+        min_length=1,
+        max_length=500,
+    )
+
+    suggested_options: list[str] = Field(
+        default_factory=list,
+        max_length=4,
+    )
+
+    @field_validator("question")
+    @classmethod
+    def normalize_question(
+        cls,
+        value: str,
+    ) -> str:
+        cleaned = value.strip()
+
+        if not cleaned:
+            raise ValueError(
+                "question cannot be empty"
+            )
+
+        return cleaned
+
+    @field_validator("suggested_options")
+    @classmethod
+    def normalize_suggested_options(
+        cls,
+        values: list[str],
+    ) -> list[str]:
+        cleaned = [
+            value.strip()
+            for value in values
+        ]
+
+        if any(
+            not value
+            for value in cleaned
+        ):
+            raise ValueError(
+                "suggested options cannot be empty"
+            )
+
+        normalized = [
+            value.casefold()
+            for value in cleaned
+        ]
+
+        if (
+            len(normalized)
+            != len(set(normalized))
+        ):
+            raise ValueError(
+                "suggested options must be unique"
+            )
+
+        return cleaned
+
 class ClarificationQuestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -168,6 +237,14 @@ class ClarificationQuestion(BaseModel):
 
     question: str = Field(
         min_length=1,
+        max_length=500,
     )
+
+    suggested_options: list[str] = Field(
+        default_factory=list,
+        max_length=4,
+    )
+
+    allow_free_text: Literal[True] = True
 
     is_assumption_prompt: bool = False

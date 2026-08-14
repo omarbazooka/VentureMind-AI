@@ -13,7 +13,7 @@ from app.schemas.intake import (
     IntakeProvenance,
     ProfileReadinessResult,
     ProfileReadinessStatus, 
-    ClarificationQuestion,
+    ClarificationTarget,
 )
 
 
@@ -83,57 +83,57 @@ OPTIONAL_PROFILE_FIELDS = (
 )
 
 
-CLARIFICATION_QUESTIONS = {
-    ProfileField.IDEA_DESCRIPTION: (
-        "Describe the business idea in one "
-        "or two sentences. What are you "
-        "offering and what problem does it solve?"
-    ),
-    ProfileField.PROBLEM: (
-        "What main problem are you trying "
-        "to solve for the customer?"
-    ),
-    ProfileField.PROPOSED_SOLUTION: (
-        "How will your product or service "
-        "solve that problem?"
-    ),
-    ProfileField.TARGET_CUSTOMERS: (
-        "Who are the main customers you "
-        "expect to use or pay for this?"
-    ),
-    ProfileField.TARGET_COUNTRY: (
-        "Which country do you want to "
-        "target first?"
-    ),
-}
+# CLARIFICATION_QUESTIONS = {
+#     ProfileField.IDEA_DESCRIPTION: (
+#         "Describe the business idea in one "
+#         "or two sentences. What are you "
+#         "offering and what problem does it solve?"
+#     ),
+#     ProfileField.PROBLEM: (
+#         "What main problem are you trying "
+#         "to solve for the customer?"
+#     ),
+#     ProfileField.PROPOSED_SOLUTION: (
+#         "How will your product or service "
+#         "solve that problem?"
+#     ),
+#     ProfileField.TARGET_CUSTOMERS: (
+#         "Who are the main customers you "
+#         "expect to use or pay for this?"
+#     ),
+#     ProfileField.TARGET_COUNTRY: (
+#         "Which country do you want to "
+#         "target first?"
+#     ),
+# }
 
-ASSUMPTION_QUESTIONS = {
-    ProfileField.IDEA_DESCRIPTION: (
-        "If the idea is still unclear, what "
-        "working description should we use "
-        "for now?"
-    ),
-    ProfileField.PROBLEM: (
-        "If you're not certain yet, what "
-        "customer problem should we treat "
-        "as the current working assumption?"
-    ),
-    ProfileField.PROPOSED_SOLUTION: (
-        "If the solution is not final yet, "
-        "what approach should we treat as "
-        "the working assumption?"
-    ),
-    ProfileField.TARGET_CUSTOMERS: (
-        "If you're not sure yet, which "
-        "customer group should we use as "
-        "a working assumption?"
-    ),
-    ProfileField.TARGET_COUNTRY: (
-        "If the market is not decided yet, "
-        "which country should we use as a "
-        "working assumption for the analysis?"
-    ),
-}
+# ASSUMPTION_QUESTIONS = {
+#     ProfileField.IDEA_DESCRIPTION: (
+#         "If the idea is still unclear, what "
+#         "working description should we use "
+#         "for now?"
+#     ),
+#     ProfileField.PROBLEM: (
+#         "If you're not certain yet, what "
+#         "customer problem should we treat "
+#         "as the current working assumption?"
+#     ),
+#     ProfileField.PROPOSED_SOLUTION: (
+#         "If the solution is not final yet, "
+#         "what approach should we treat as "
+#         "the working assumption?"
+#     ),
+#     ProfileField.TARGET_CUSTOMERS: (
+#         "If you're not sure yet, which "
+#         "customer group should we use as "
+#         "a working assumption?"
+#     ),
+#     ProfileField.TARGET_COUNTRY: (
+#         "If the market is not decided yet, "
+#         "which country should we use as a "
+#         "working assumption for the analysis?"
+#     ),
+# }
 
 def _normalize_text(
     *,
@@ -572,8 +572,7 @@ def evaluate_profile_readiness(
             unknown_critical_fields
         ),
     )
-
-def select_next_clarification_question(
+def select_next_clarification_target(
     *,
     readiness_result: ProfileReadinessResult,
     profile_data: dict[str, Any],
@@ -582,7 +581,7 @@ def select_next_clarification_question(
         dict[str, Any],
     ],
     unknown_fields: list[str],
-) -> ClarificationQuestion | None:
+) -> ClarificationTarget | None:
     if (
         readiness_result.readiness
         == ProfileReadinessStatus.READY_FOR_ANALYSIS
@@ -605,18 +604,14 @@ def select_next_clarification_question(
             field=ProfileField.PROBLEM,
             profile_data=profile_data,
             profile_metadata=profile_metadata,
-            unknown_field_names=(
-                unknown_field_names
-            ),
+            unknown_field_names=unknown_field_names,
         )
 
         has_solution = _has_user_grounded_value(
             field=ProfileField.PROPOSED_SOLUTION,
             profile_data=profile_data,
             profile_metadata=profile_metadata,
-            unknown_field_names=(
-                unknown_field_names
-            ),
+            unknown_field_names=unknown_field_names,
         )
 
         if (
@@ -627,11 +622,8 @@ def select_next_clarification_question(
                 not in unknown_field_names
             )
         ):
-            return _build_clarification_question(
-                field=(
-                    ProfileField.PROPOSED_SOLUTION
-                ),
-                assumption_prompt=False,
+            return ClarificationTarget(
+                field=ProfileField.PROPOSED_SOLUTION,
             )
 
         if (
@@ -642,16 +634,11 @@ def select_next_clarification_question(
                 not in unknown_field_names
             )
         ):
-            return _build_clarification_question(
+            return ClarificationTarget(
                 field=ProfileField.PROBLEM,
-                assumption_prompt=False,
             )
 
-        for field in (
-            ProfileField.IDEA_DESCRIPTION,
-            ProfileField.PROBLEM,
-            ProfileField.PROPOSED_SOLUTION,
-        ):
+        for field in CORE_IDEA_FIELDS:
             if field.value in unknown_field_names:
                 continue
 
@@ -659,15 +646,12 @@ def select_next_clarification_question(
                 field=field,
                 profile_data=profile_data,
                 profile_metadata=profile_metadata,
-                unknown_field_names=(
-                    unknown_field_names
-                ),
+                unknown_field_names=unknown_field_names,
             ):
                 continue
 
-            return _build_clarification_question(
+            return ClarificationTarget(
                 field=field,
-                assumption_prompt=False,
             )
 
     for field in DIRECT_CRITICAL_FIELDS:
@@ -677,9 +661,8 @@ def select_next_clarification_question(
         if field.value in unknown_field_names:
             continue
 
-        return _build_clarification_question(
+        return ClarificationTarget(
             field=field,
-            assumption_prompt=False,
         )
 
     for field in (
@@ -693,29 +676,9 @@ def select_next_clarification_question(
             field
             in readiness_result.unknown_critical_fields
         ):
-            return _build_clarification_question(
+            return ClarificationTarget(
                 field=field,
-                assumption_prompt=True,
+                is_assumption_prompt=True,
             )
 
     return None
-
-
-def _build_clarification_question(
-    *,
-    field: ProfileField,
-    assumption_prompt: bool,
-) -> ClarificationQuestion:
-    questions = (
-        ASSUMPTION_QUESTIONS
-        if assumption_prompt
-        else CLARIFICATION_QUESTIONS
-    )
-
-    return ClarificationQuestion(
-        field=field,
-        question=questions[field],
-        is_assumption_prompt=(
-            assumption_prompt
-        ),
-    )

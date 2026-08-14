@@ -7,14 +7,13 @@ from app.schemas.intake import (
     ProfileFieldUpdate,
     ProfileReadinessStatus,
     ProfileValueKind,
-    ClarificationQuestion,
 )
 from app.services.intake_profile import (
     ProfileValueValidationError,
     evaluate_profile_readiness,
     plan_profile_merge,
+    select_next_clarification_target,
     validate_and_normalize_update,
-    select_next_clarification_question,
 )
 
 
@@ -194,6 +193,7 @@ def test_changed_existing_value_creates_conflict():
         "target_city": "Cairo",
     }
 
+
 def test_list_order_does_not_create_false_conflict():
     current_data = {
         "target_customers": [
@@ -257,6 +257,7 @@ def test_merge_accepts_safe_updates_and_preserves_conflicts():
         "budget": 300000,
     }
 
+
 def make_metadata(
     *,
     provenance: IntakeProvenance = (
@@ -270,6 +271,7 @@ def make_metadata(
     ).model_dump(
         mode="json"
     )
+
 
 def test_empty_profile_is_not_ready():
     result = evaluate_profile_readiness(
@@ -363,6 +365,7 @@ def test_problem_and_solution_satisfy_core_idea():
         )
     )
 
+
 def test_ai_assumption_cannot_force_readiness():
     profile_data = {
         "idea_description": "Delivery app",
@@ -396,6 +399,7 @@ def test_ai_assumption_cannot_force_readiness():
         in result.missing_critical_fields
     )
 
+
 def test_unknown_critical_field_blocks_readiness():
     profile_data = {
         "idea_description": "Delivery app",
@@ -426,35 +430,29 @@ def test_unknown_critical_field_blocks_readiness():
     )
 
 
-def test_empty_profile_asks_for_core_idea_first():
+def test_empty_profile_targets_core_idea_first():
     readiness = evaluate_profile_readiness(
         profile_data={},
         profile_metadata={},
         unknown_fields=[],
     )
 
-    question = (
-        select_next_clarification_question(
-            readiness_result=readiness,
-            profile_data={},
-            profile_metadata={},
-            unknown_fields=[],
-        )
+    target = select_next_clarification_target(
+        readiness_result=readiness,
+        profile_data={},
+        profile_metadata={},
+        unknown_fields=[],
     )
 
-    assert question is not None
-
+    assert target is not None
     assert (
-        question.field
+        target.field
         == ProfileField.IDEA_DESCRIPTION
     )
+    assert target.is_assumption_prompt is False
 
-    assert (
-        question.is_assumption_prompt
-        is False
-    )
 
-def test_known_problem_asks_for_solution():
+def test_known_problem_targets_solution():
     profile_data = {
         "problem": (
             "Restaurants waste surplus food"
@@ -471,23 +469,22 @@ def test_known_problem_asks_for_solution():
         unknown_fields=[],
     )
 
-    question = (
-        select_next_clarification_question(
-            readiness_result=readiness,
-            profile_data=profile_data,
-            profile_metadata=profile_metadata,
-            unknown_fields=[],
-        )
+    target = select_next_clarification_target(
+        readiness_result=readiness,
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[],
     )
 
-    assert question is not None
+    assert target is not None
 
     assert (
-        question.field
+        target.field
         == ProfileField.PROPOSED_SOLUTION
     )
 
-def test_known_solution_asks_for_problem():
+
+def test_known_solution_targets_problem():
     profile_data = {
         "proposed_solution": (
             "A marketplace for surplus meals"
@@ -506,23 +503,22 @@ def test_known_solution_asks_for_problem():
         unknown_fields=[],
     )
 
-    question = (
-        select_next_clarification_question(
-            readiness_result=readiness,
-            profile_data=profile_data,
-            profile_metadata=profile_metadata,
-            unknown_fields=[],
-        )
+    target = select_next_clarification_target(
+        readiness_result=readiness,
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[],
     )
 
-    assert question is not None
+    assert target is not None
 
     assert (
-        question.field
+        target.field
         == ProfileField.PROBLEM
     )
 
-def test_core_idea_then_asks_target_customers():
+
+def test_core_idea_targets_target_customers():
     profile_data = {
         "idea_description": (
             "A subscription meal service"
@@ -539,24 +535,22 @@ def test_core_idea_then_asks_target_customers():
         unknown_fields=[],
     )
 
-    question = (
-        select_next_clarification_question(
-            readiness_result=readiness,
-            profile_data=profile_data,
-            profile_metadata=profile_metadata,
-            unknown_fields=[],
-        )
+    target = select_next_clarification_target(
+        readiness_result=readiness,
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[],
     )
 
-    assert question is not None
+    assert target is not None
 
     assert (
-        question.field
+        target.field
         == ProfileField.TARGET_CUSTOMERS
     )
 
 
-def test_customer_known_then_asks_country():
+def test_known_customers_target_country():
     profile_data = {
         "idea_description": (
             "A subscription meal service"
@@ -577,23 +571,22 @@ def test_customer_known_then_asks_country():
         unknown_fields=[],
     )
 
-    question = (
-        select_next_clarification_question(
-            readiness_result=readiness,
-            profile_data=profile_data,
-            profile_metadata=profile_metadata,
-            unknown_fields=[],
-        )
+    target = select_next_clarification_target(
+        readiness_result=readiness,
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[],
     )
 
-    assert question is not None
+    assert target is not None
 
     assert (
-        question.field
+        target.field
         == ProfileField.TARGET_COUNTRY
     )
 
-def test_unknown_field_does_not_get_immediately_reasked():
+
+def test_unknown_field_is_not_immediately_retargeted():
     profile_data = {
         "idea_description": (
             "A subscription meal service"
@@ -614,28 +607,27 @@ def test_unknown_field_does_not_get_immediately_reasked():
         unknown_fields=unknown_fields,
     )
 
-    question = (
-        select_next_clarification_question(
-            readiness_result=readiness,
-            profile_data=profile_data,
-            profile_metadata=profile_metadata,
-            unknown_fields=unknown_fields,
-        )
+    target = select_next_clarification_target(
+        readiness_result=readiness,
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=unknown_fields,
     )
 
-    assert question is not None
+    assert target is not None
 
     assert (
-        question.field
+        target.field
         == ProfileField.TARGET_COUNTRY
     )
 
     assert (
-        question.is_assumption_prompt
+        target.is_assumption_prompt
         is False
     )
 
-def test_unknown_remaining_field_offers_assumption():
+
+def test_unknown_remaining_field_targets_assumption_prompt():
     profile_data = {
         "idea_description": (
             "A subscription meal service"
@@ -658,29 +650,27 @@ def test_unknown_remaining_field_offers_assumption():
         unknown_fields=unknown_fields,
     )
 
-    question = (
-        select_next_clarification_question(
-            readiness_result=readiness,
-            profile_data=profile_data,
-            profile_metadata=profile_metadata,
-            unknown_fields=unknown_fields,
-        )
+    target = select_next_clarification_target(
+        readiness_result=readiness,
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=unknown_fields,
     )
 
-    assert question is not None
+    assert target is not None
 
     assert (
-        question.field
+        target.field
         == ProfileField.TARGET_CUSTOMERS
     )
 
     assert (
-        question.is_assumption_prompt
+        target.is_assumption_prompt
         is True
     )
 
 
-def test_ready_profile_has_no_next_question():
+def test_ready_profile_has_no_next_target():
     profile_data = {
         "idea_description": "Delivery app",
         "target_customers": "Students",
@@ -698,13 +688,11 @@ def test_ready_profile_has_no_next_question():
         unknown_fields=[],
     )
 
-    question = (
-        select_next_clarification_question(
-            readiness_result=readiness,
-            profile_data=profile_data,
-            profile_metadata=profile_metadata,
-            unknown_fields=[],
-        )
+    target = select_next_clarification_target(
+        readiness_result=readiness,
+        profile_data=profile_data,
+        profile_metadata=profile_metadata,
+        unknown_fields=[],
     )
 
-    assert question is None
+    assert target is None
