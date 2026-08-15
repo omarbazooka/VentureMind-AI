@@ -7,20 +7,21 @@ from app.chat.context import (
     WorkingMessage,
 )
 from app.schemas.intake import (
-    IntakeExtraction,
     IntakeProvenance,
     ProfileField,
-    ProfileFieldUpdate,
+    ProfileValueKind,
 )
 from app.services.intake_extraction import (
     IntakeExtractionService,
+    LLMIntakeExtraction,
+    LLMProfileFieldUpdate,
 )
 
 
 class FakeGateway:
     def __init__(
         self,
-        result: IntakeExtraction,
+        result: LLMIntakeExtraction,
     ) -> None:
         self.result = result
         self.calls = []
@@ -69,25 +70,61 @@ def make_context(
     )
 
 
-def test_extract_uses_structured_intake_schema():
-    extraction = IntakeExtraction(
+def make_provider_extraction(
+    *,
+    field: ProfileField = (
+        ProfileField.TARGET_COUNTRY
+    ),
+    value: str = "Egypt",
+    value_kind: ProfileValueKind = (
+        ProfileValueKind.FACT
+    ),
+) -> LLMIntakeExtraction:
+    return LLMIntakeExtraction(
         updates=[
-            ProfileFieldUpdate(
-                field=(
-                    ProfileField
-                    .TARGET_COUNTRY
-                ),
-                value="Egypt",
-                provenance=(
-                    IntakeProvenance.USER
-                ),
+            LLMProfileFieldUpdate(
+                field=field,
+                value=value,
+                value_kind=value_kind,
                 confidence=0.95,
             ),
         ],
+        unknown_fields=[],
     )
 
+
+def _contains_key(
+    value,
+    key: str,
+) -> bool:
+    if isinstance(value, dict):
+        if key in value:
+            return True
+
+        return any(
+            _contains_key(
+                nested_value,
+                key,
+            )
+            for nested_value
+            in value.values()
+        )
+
+    if isinstance(value, list):
+        return any(
+            _contains_key(
+                item,
+                key,
+            )
+            for item in value
+        )
+
+    return False
+
+
+def test_extract_uses_provider_safe_schema_and_returns_domain_extraction():
     gateway = FakeGateway(
-        result=extraction,
+        result=make_provider_extraction()
     )
 
     service = IntakeExtractionService(
@@ -99,7 +136,25 @@ def test_extract_uses_structured_intake_schema():
         make_context()
     )
 
-    assert result == extraction
+    assert len(
+        result.updates
+    ) == 1
+
+    update = result.updates[0]
+
+    assert (
+        update.field
+        == ProfileField.TARGET_COUNTRY
+    )
+    assert update.value == "Egypt"
+    assert (
+        update.provenance
+        == IntakeProvenance.USER
+    )
+    assert (
+        update.value_kind
+        == ProfileValueKind.FACT
+    )
 
     assert len(
         gateway.calls
@@ -109,7 +164,7 @@ def test_extract_uses_structured_intake_schema():
 
     assert (
         call["response_model"]
-        is IntakeExtraction
+        is LLMIntakeExtraction
     )
 
     assert (
@@ -128,9 +183,101 @@ def test_extract_uses_structured_intake_schema():
     )
 
 
+def test_extract_converts_budget_string_to_number():
+    gateway = FakeGateway(
+        result=make_provider_extraction(
+            field=ProfileField.BUDGET,
+            value="500000",
+        )
+    )
+
+    service = IntakeExtractionService(
+        gateway=gateway,
+        model="test-model",
+    )
+
+    result = service.extract(
+        make_context(
+            current_user_message=(
+                "الميزانية 500 ألف جنيه"
+            )
+        )
+    )
+
+    update = result.updates[0]
+
+    assert (
+        update.field
+        == ProfileField.BUDGET
+    )
+    assert update.value == 500000
+    assert isinstance(
+        update.value,
+        int,
+    )
+
+
+def test_provider_schema_avoids_profile_value_union():
+    schema = (
+        LLMIntakeExtraction
+        .model_json_schema()
+    )
+
+    assert not _contains_key(
+        schema,
+        "anyOf",
+    )
+
+
+def test_provider_schema_requires_value_kind_and_arrays():
+    schema = (
+        LLMIntakeExtraction
+        .model_json_schema()
+    )
+
+    assert set(
+        schema["required"]
+    ) == {
+        "updates",
+        "unknown_fields",
+    }
+
+    update_required = set(
+        schema["$defs"][
+            "LLMProfileFieldUpdate"
+        ][
+            "required"
+        ]
+    )
+
+    assert update_required == {
+        "field",
+        "value",
+        "value_kind",
+        "confidence",
+    }
+
+
+def test_provider_budget_rejects_non_numeric_value():
+    with pytest.raises(
+        ValueError,
+        match=(
+            "budget extraction "
+            "must be a plain number"
+        ),
+    ):
+        make_provider_extraction(
+            field=ProfileField.BUDGET,
+            value="500 thousand EGP",
+        )
+
+
 def test_extract_includes_existing_profile_context():
     gateway = FakeGateway(
-        result=IntakeExtraction()
+        result=LLMIntakeExtraction(
+            updates=[],
+            unknown_fields=[],
+        )
     )
 
     service = IntakeExtractionService(
@@ -161,7 +308,10 @@ def test_extract_includes_existing_profile_context():
 
 def test_extract_includes_recent_messages():
     gateway = FakeGateway(
-        result=IntakeExtraction()
+        result=LLMIntakeExtraction(
+            updates=[],
+            unknown_fields=[],
+        )
     )
 
     service = IntakeExtractionService(
@@ -187,7 +337,10 @@ def test_extract_includes_recent_messages():
 
 def test_extract_rejects_empty_current_message():
     gateway = FakeGateway(
-        result=IntakeExtraction()
+        result=LLMIntakeExtraction(
+            updates=[],
+            unknown_fields=[],
+        )
     )
 
     service = IntakeExtractionService(
