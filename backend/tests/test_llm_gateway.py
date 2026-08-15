@@ -1,5 +1,5 @@
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from unittest.mock import Mock
 
 from app.llm.gateway import (
@@ -13,70 +13,91 @@ from app.schemas.turn import (
     TurnUnderstanding,
 )
 
-class ChildWithDefault(BaseModel):
+
+class ChildWithProviderUnsupportedKeywords(BaseModel):
     value_kind: str = "FACT"
+    label: str = Field(
+        min_length=1,
+        max_length=20,
+    )
 
 
-class ParentWithDefault(BaseModel):
-    children: list[ChildWithDefault]
+class ParentWithProviderUnsupportedKeywords(BaseModel):
+    children: list[
+        ChildWithProviderUnsupportedKeywords
+    ]
 
 
-class FakeInteraction:
-    def __init__(self, output_text: str):
-        self.output_text = output_text
-
-
-class FakeInteractions:
+class FakeResponse:
     def __init__(
         self,
-        output_text: str | None = None,
-        error: Exception | None = None,
-    ):
-        self.output_text = output_text
-        self.error = error
+        text: str | None,
+    ) -> None:
+        self.text = text
 
-    def create(self, **kwargs):
+
+class FakeModels:
+    def __init__(
+        self,
+        text: str | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.text = text
+        self.error = error
+        self.calls: list[dict] = []
+
+    def generate_content(
+        self,
+        **kwargs,
+    ) -> FakeResponse:
+        self.calls.append(kwargs)
+
         if self.error is not None:
             raise self.error
 
-        return FakeInteraction(
-            self.output_text
+        return FakeResponse(
+            self.text
         )
 
 
 class FakeGeminiClient:
     def __init__(
         self,
-        output_text: str | None = None,
+        text: str | None = None,
         error: Exception | None = None,
-    ):
-        self.interactions = FakeInteractions(
-            output_text=output_text,
+    ) -> None:
+        self.models = FakeModels(
+            text=text,
             error=error,
         )
 
 
+VALID_TURN_JSON = """
+{
+    "sub_requests": [
+        {
+            "id": "req_1",
+            "intent": "GENERAL_CHAT",
+            "payload": {},
+            "confidence": 0.95,
+            "depends_on": []
+        }
+    ],
+    "execution_mode": "SINGLE",
+    "overall_confidence": 0.95,
+    "clarification_needed": false
+}
+"""
+
+
 def test_generate_structured_returns_validated_model():
     client = FakeGeminiClient(
-        output_text="""
-        {
-            "sub_requests": [
-                {
-                    "id": "req_1",
-                    "intent": "GENERAL_CHAT",
-                    "payload": {},
-                    "confidence": 0.95,
-                    "depends_on": []
-                }
-            ],
-            "execution_mode": "SINGLE",
-            "overall_confidence": 0.95,
-            "clarification_needed": false
-        }
-        """
+        text=VALID_TURN_JSON
     )
 
-    gateway = LLMGateway(client=client)
+    gateway = LLMGateway(
+        client=client
+    )
 
     result = gateway.generate_structured(
         model="test-model",
@@ -100,17 +121,30 @@ def test_generate_structured_returns_validated_model():
         == Intent.GENERAL_CHAT
     )
 
+    call = client.models.calls[0]
+
+    assert (
+        call["config"]["response_mime_type"]
+        == "application/json"
+    )
+    assert (
+        "response_json_schema"
+        in call["config"]
+    )
+
 
 def test_generate_structured_rejects_invalid_output():
     client = FakeGeminiClient(
-        output_text="""
+        text="""
         {
             "execution_mode": "INVALID"
         }
         """
     )
 
-    gateway = LLMGateway(client=client)
+    gateway = LLMGateway(
+        client=client
+    )
 
     with pytest.raises(
         LLMInvalidOutputError
@@ -130,7 +164,9 @@ def test_generate_structured_normalizes_provider_error():
         )
     )
 
-    gateway = LLMGateway(client=client)
+    gateway = LLMGateway(
+        client=client
+    )
 
     with pytest.raises(
         LLMGatewayError
@@ -142,34 +178,20 @@ def test_generate_structured_normalizes_provider_error():
             response_model=TurnUnderstanding,
         )
 
+
 def test_generate_structured_retries_after_invalid_output():
     client = Mock()
 
-    client.interactions.create.side_effect = [
-        FakeInteraction(
+    client.models.generate_content.side_effect = [
+        FakeResponse(
             """
             {
                 "execution_mode": "INVALID"
             }
             """
         ),
-        FakeInteraction(
-            """
-            {
-                "sub_requests": [
-                    {
-                        "id": "req_1",
-                        "intent": "GENERAL_CHAT",
-                        "payload": {},
-                        "confidence": 0.95,
-                        "depends_on": []
-                    }
-                ],
-                "execution_mode": "SINGLE",
-                "overall_confidence": 0.95,
-                "clarification_needed": false
-            }
-            """
+        FakeResponse(
+            VALID_TURN_JSON
         ),
     ]
 
@@ -190,19 +212,38 @@ def test_generate_structured_retries_after_invalid_output():
     )
 
     assert (
-        client.interactions.create.call_count
+        client.models
+        .generate_content
+        .call_count
         == 2
     )
 
-def test_generate_structured_removes_nested_schema_defaults():
+    retry_config = (
+        client.models
+        .generate_content
+        .call_args_list[1]
+        .kwargs["config"]
+    )
+
+    assert (
+        "RETRY INSTRUCTION"
+        in retry_config[
+            "system_instruction"
+        ]
+    )
+
+
+def test_generate_structured_sanitizes_provider_schema():
     client = Mock()
 
-    client.interactions.create.return_value = (
-        FakeInteraction(
+    client.models.generate_content.return_value = (
+        FakeResponse(
             """
             {
                 "children": [
-                    {}
+                    {
+                        "label": "valid"
+                    }
                 ]
             }
             """
@@ -217,43 +258,55 @@ def test_generate_structured_removes_nested_schema_defaults():
         model="test-model",
         system_prompt="Test.",
         user_prompt="Test.",
-        response_model=ParentWithDefault,
+        response_model=(
+            ParentWithProviderUnsupportedKeywords
+        ),
     )
 
     call_kwargs = (
-        client
-        .interactions
-        .create
+        client.models
+        .generate_content
         .call_args
         .kwargs
     )
 
     schema = (
-        call_kwargs[
-            "response_format"
-        ][
-            "schema"
+        call_kwargs["config"][
+            "response_json_schema"
         ]
     )
 
     child_schema = (
-        schema[
-            "$defs"
-        ][
-            "ChildWithDefault"
-        ][
-            "properties"
-        ][
-            "value_kind"
-        ]
+        schema["$defs"][
+            "ChildWithProviderUnsupportedKeywords"
+        ]["properties"]
+    )
+
+    value_kind_schema = (
+        child_schema["value_kind"]
+    )
+    label_schema = (
+        child_schema["label"]
     )
 
     assert (
         "default"
-        not in child_schema
+        not in value_kind_schema
+    )
+    assert (
+        "minLength"
+        not in label_schema
+    )
+    assert (
+        "maxLength"
+        not in label_schema
     )
 
     assert (
         result.children[0].value_kind
         == "FACT"
+    )
+    assert (
+        result.children[0].label
+        == "valid"
     )
