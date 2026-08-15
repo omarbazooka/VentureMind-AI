@@ -10,7 +10,28 @@ StructuredOutputT = TypeVar( # TypeVar --> subclass from BaseModel with Structur
     "StructuredOutputT",
     bound=BaseModel, # to collect model_json_schema(),  model_validate_json()
 )
+def _sanitize_gemini_json_schema(
+    value: Any,
+) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_gemini_json_schema(
+                nested_value
+            )
+            for key, nested_value
+            in value.items()
+            if key != "default"
+        }
 
+    if isinstance(value, list):
+        return [
+            _sanitize_gemini_json_schema(
+                item
+            )
+            for item in value
+        ]
+
+    return value
 
 class LLMGatewayError(RuntimeError):
     pass
@@ -54,6 +75,12 @@ class LLMGateway:
     ) -> StructuredOutputT:
         failure_reasons: list[str] = []
         last_validation_error: ValidationError | None = None
+        provider_schema = (
+            _sanitize_gemini_json_schema(
+                response_model.model_json_schema()
+            )
+        )
+
 
         for attempt in range(
             1,
@@ -79,7 +106,7 @@ class LLMGateway:
                     response_format={
                         "type": "text",
                         "mime_type": "application/json",
-                        "schema": response_model.model_json_schema(),
+                        "schema": provider_schema,
                     },
                 )
 

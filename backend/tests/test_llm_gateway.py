@@ -1,4 +1,5 @@
 import pytest
+from pydantic import BaseModel
 from unittest.mock import Mock
 
 from app.llm.gateway import (
@@ -11,6 +12,13 @@ from app.schemas.turn import (
     Intent,
     TurnUnderstanding,
 )
+
+class ChildWithDefault(BaseModel):
+    value_kind: str = "FACT"
+
+
+class ParentWithDefault(BaseModel):
+    children: list[ChildWithDefault]
 
 
 class FakeInteraction:
@@ -184,4 +192,68 @@ def test_generate_structured_retries_after_invalid_output():
     assert (
         client.interactions.create.call_count
         == 2
+    )
+
+def test_generate_structured_removes_nested_schema_defaults():
+    client = Mock()
+
+    client.interactions.create.return_value = (
+        FakeInteraction(
+            """
+            {
+                "children": [
+                    {}
+                ]
+            }
+            """
+        )
+    )
+
+    gateway = LLMGateway(
+        client=client
+    )
+
+    result = gateway.generate_structured(
+        model="test-model",
+        system_prompt="Test.",
+        user_prompt="Test.",
+        response_model=ParentWithDefault,
+    )
+
+    call_kwargs = (
+        client
+        .interactions
+        .create
+        .call_args
+        .kwargs
+    )
+
+    schema = (
+        call_kwargs[
+            "response_format"
+        ][
+            "schema"
+        ]
+    )
+
+    child_schema = (
+        schema[
+            "$defs"
+        ][
+            "ChildWithDefault"
+        ][
+            "properties"
+        ][
+            "value_kind"
+        ]
+    )
+
+    assert (
+        "default"
+        not in child_schema
+    )
+
+    assert (
+        result.children[0].value_kind
+        == "FACT"
     )
