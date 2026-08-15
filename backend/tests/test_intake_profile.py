@@ -1,4 +1,8 @@
 import pytest
+from uuid import uuid4
+from app.models.idea_profile import (
+    IdeaProfile,
+)
 
 from app.schemas.intake import (
     IntakeProvenance,
@@ -14,6 +18,7 @@ from app.services.intake_profile import (
     plan_profile_merge,
     select_next_clarification_target,
     validate_and_normalize_update,
+    persist_profile_merge_plan,
 )
 
 
@@ -696,3 +701,161 @@ def test_ready_profile_has_no_next_target():
     )
 
     assert target is None
+
+
+def test_merge_accepts_new_unknown_field():
+    plan = plan_profile_merge(
+        current_data={},
+        updates=[],
+        current_unknown_fields=[],
+        declared_unknown_fields=[
+            ProfileField.TARGET_COUNTRY,
+        ],
+    )
+
+    assert plan.accepted_updates == []
+
+    assert plan.accepted_unknown_fields == [
+        ProfileField.TARGET_COUNTRY
+    ]
+
+    assert plan.unknown_conflicts == []
+
+
+def test_existing_unknown_field_is_unchanged():
+    plan = plan_profile_merge(
+        current_data={},
+        updates=[],
+        current_unknown_fields=[
+            "target_country",
+        ],
+        declared_unknown_fields=[
+            ProfileField.TARGET_COUNTRY,
+        ],
+    )
+
+    assert (
+        plan.accepted_unknown_fields
+        == []
+    )
+
+    assert (
+        plan.unchanged_unknown_fields
+        == [ProfileField.TARGET_COUNTRY]
+    )
+
+def test_unknown_declaration_conflicts_with_known_value():
+    plan = plan_profile_merge(
+        current_data={
+            "target_country": "Egypt",
+        },
+        updates=[],
+        current_unknown_fields=[],
+        declared_unknown_fields=[
+            ProfileField.TARGET_COUNTRY,
+        ],
+    )
+
+    assert (
+        plan.accepted_unknown_fields
+        == []
+    )
+
+    assert len(
+        plan.unknown_conflicts
+    ) == 1
+
+    conflict = (
+        plan.unknown_conflicts[0]
+    )
+
+    assert (
+        conflict.field
+        == ProfileField.TARGET_COUNTRY
+    )
+
+    assert (
+        conflict.current_value
+        == "Egypt"
+    )
+
+def test_answering_unknown_field_accepts_value():
+    update = make_update(
+        field=ProfileField.TARGET_COUNTRY,
+        value="Egypt",
+    )
+
+    plan = plan_profile_merge(
+        current_data={},
+        updates=[update],
+        current_unknown_fields=[
+            "target_country",
+        ],
+    )
+
+    assert plan.accepted_updates == [
+        update
+    ]
+
+    assert (
+        plan.candidate_profile_data[
+            "target_country"
+        ]
+        == "Egypt"
+    )
+
+class FakeDb:
+    def __init__(self):
+        self.added = []
+
+    def add(self, value):
+        self.added.append(value)
+
+    def flush(self):
+        pass
+
+def test_persist_unknown_only_creates_new_profile_version():
+    idea_id = uuid4()
+
+    current_profile = IdeaProfile(
+        idea_id=idea_id,
+        version=1,
+        readiness="NOT_READY",
+        profile_data={},
+        profile_metadata={},
+        unknown_fields=[],
+    )
+
+    plan = plan_profile_merge(
+        current_data={},
+        updates=[],
+        current_unknown_fields=[],
+        declared_unknown_fields=[
+            ProfileField.TARGET_COUNTRY,
+        ],
+    )
+
+    db = FakeDb()
+
+    new_profile = (
+        persist_profile_merge_plan(
+            db=db,
+            idea_id=idea_id,
+            current_profile=(
+                current_profile
+            ),
+            merge_plan=plan,
+        )
+    )
+
+    assert new_profile is not current_profile
+
+    assert new_profile.version == 2
+
+    assert new_profile.unknown_fields == [
+        "target_country"
+    ]
+
+    assert db.added == [
+        new_profile
+    ]

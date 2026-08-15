@@ -137,8 +137,14 @@ def update_profile(
 
     try:
         merge_plan = plan_profile_merge(
-            current_data=current_profile.profile_data,
+            current_data=(
+                current_profile.profile_data
+            ),
             updates=updates,
+            current_unknown_fields=(
+                current_profile.unknown_fields
+                or []
+            ),
         )
     except ProfileValueValidationError as exc:
         raise HTTPException(

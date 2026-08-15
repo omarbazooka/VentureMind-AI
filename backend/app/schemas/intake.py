@@ -85,18 +85,45 @@ class ProfileConflict(BaseModel):
     proposed_value: ProfileValue
 
 
+
+class ProfileUnknownConflict(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field: ProfileField
+    current_value: Any
+
+
+
+
 class ProfileMergePlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     accepted_updates: list[ProfileFieldUpdate] = Field(
         default_factory=list,
     )
+
     conflicts: list[ProfileConflict] = Field(
         default_factory=list,
     )
+
     unchanged_fields: list[ProfileField] = Field(
         default_factory=list,
     )
+
+    accepted_unknown_fields: list[ProfileField] = Field(
+        default_factory=list,
+    )
+
+    unchanged_unknown_fields: list[ProfileField] = Field(
+        default_factory=list,
+    )
+
+    unknown_conflicts: list[
+        ProfileUnknownConflict
+    ] = Field(
+        default_factory=list,
+    )
+
     candidate_profile_data: dict[str, Any]
 
 
@@ -248,3 +275,48 @@ class ClarificationQuestion(BaseModel):
     allow_free_text: Literal[True] = True
 
     is_assumption_prompt: bool = False
+
+
+class IntakeHandlerStatus(StrEnum):
+    CLARIFICATION_REQUIRED = (
+        "CLARIFICATION_REQUIRED"
+    )
+
+    CONFLICT_REQUIRES_CONFIRMATION = (
+        "CONFLICT_REQUIRES_CONFIRMATION"
+    )
+
+    READY_FOR_ANALYSIS = (
+        "READY_FOR_ANALYSIS"
+    )
+
+
+class IntakeHandlerResult(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid"
+    )
+
+    status: IntakeHandlerStatus
+
+    profile_version: int = Field(
+        ge=1,
+    )
+
+    readiness: ProfileReadinessStatus
+
+    clarification: (
+        ClarificationQuestion
+        | None
+    ) = None
+
+    conflicts: list[
+        ProfileConflict
+    ] = Field(
+        default_factory=list,
+    )
+
+    unknown_conflicts: list[
+        ProfileUnknownConflict
+    ] = Field(
+        default_factory=list,
+    )

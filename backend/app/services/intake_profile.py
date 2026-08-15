@@ -5,15 +5,16 @@ from sqlalchemy.orm import Session
 
 from app.models.idea_profile import IdeaProfile
 from app.schemas.intake import (
+    ClarificationTarget,
+    IntakeProvenance,
     ProfileConflict,
     ProfileField,
     ProfileFieldMetadata,
     ProfileFieldUpdate,
     ProfileMergePlan,
-    IntakeProvenance,
     ProfileReadinessResult,
-    ProfileReadinessStatus, 
-    ClarificationTarget,
+    ProfileReadinessStatus,
+    ProfileUnknownConflict,
 )
 
 
@@ -311,46 +312,179 @@ def plan_profile_merge(
     *,
     current_data: dict[str, Any],
     updates: list[ProfileFieldUpdate],
+    current_unknown_fields: list[str] | None = None,
+    declared_unknown_fields: list[
+        ProfileField
+    ] | None = None,
 ) -> ProfileMergePlan:
-    validated_updates = validate_profile_updates(updates)
-    candidate_data = dict(current_data)
+    validated_updates = validate_profile_updates(
+        updates
+    )
 
-    accepted_updates: list[ProfileFieldUpdate] = []
-    conflicts: list[ProfileConflict] = []
-    unchanged_fields: list[ProfileField] = []
+    current_unknown_field_names = set(
+        current_unknown_fields or []
+    )
+
+    declared_unknowns = list(
+        dict.fromkeys(
+            declared_unknown_fields or []
+        )
+    )
+
+    update_fields = {
+        update.field
+        for update in validated_updates
+    }
+
+    unknown_overlap = (
+        update_fields
+        & set(declared_unknowns)
+    )
+
+    if unknown_overlap:
+        names = sorted(
+            field.value
+            for field in unknown_overlap
+        )
+
+        raise ProfileValueValidationError(
+            "A profile field cannot be both "
+            "updated and declared unknown: "
+            f"{names}"
+        )
+
+    candidate_data = dict(
+        current_data
+    )
+
+    accepted_updates: list[
+        ProfileFieldUpdate
+    ] = []
+
+    conflicts: list[
+        ProfileConflict
+    ] = []
+
+    unchanged_fields: list[
+        ProfileField
+    ] = []
+
+    accepted_unknown_fields: list[
+        ProfileField
+    ] = []
+
+    unchanged_unknown_fields: list[
+        ProfileField
+    ] = []
+
+    unknown_conflicts: list[
+        ProfileUnknownConflict
+    ] = []
 
     for update in validated_updates:
         key = update.field.value
 
         if key not in current_data:
-            accepted_updates.append(update)
-            candidate_data[key] = update.value
+            accepted_updates.append(
+                update
+            )
+
+            candidate_data[key] = (
+                update.value
+            )
+
             continue
 
-        current_value = current_data[key]
+        current_value = (
+            current_data[key]
+        )
 
         if _values_equivalent(
             current_value,
             update.value,
         ):
-            unchanged_fields.append(update.field)
+            if (
+                key
+                in current_unknown_field_names
+            ):
+                accepted_updates.append(
+                    update
+                )
+
+                candidate_data[key] = (
+                    update.value
+                )
+            else:
+                unchanged_fields.append(
+                    update.field
+                )
+
             continue
 
         conflicts.append(
             ProfileConflict(
                 field=update.field,
-                current_value=current_value,
-                proposed_value=update.value,
+                current_value=(
+                    current_value
+                ),
+                proposed_value=(
+                    update.value
+                ),
             )
         )
 
-    return ProfileMergePlan(
-        accepted_updates=accepted_updates,
-        conflicts=conflicts,
-        unchanged_fields=unchanged_fields,
-        candidate_profile_data=candidate_data,
-    )
+    for field in declared_unknowns:
+        field_name = field.value
 
+        if field_name in current_data:
+            unknown_conflicts.append(
+                ProfileUnknownConflict(
+                    field=field,
+                    current_value=(
+                        current_data[
+                            field_name
+                        ]
+                    ),
+                )
+            )
+
+            continue
+
+        if (
+            field_name
+            in current_unknown_field_names
+        ):
+            unchanged_unknown_fields.append(
+                field
+            )
+
+            continue
+
+        accepted_unknown_fields.append(
+            field
+        )
+
+    return ProfileMergePlan(
+        accepted_updates=(
+            accepted_updates
+        ),
+        conflicts=conflicts,
+        unchanged_fields=(
+            unchanged_fields
+        ),
+        accepted_unknown_fields=(
+            accepted_unknown_fields
+        ),
+        unchanged_unknown_fields=(
+            unchanged_unknown_fields
+        ),
+        unknown_conflicts=(
+            unknown_conflicts
+        ),
+        candidate_profile_data=(
+            candidate_data
+        ),
+    )
 
 def persist_profile_merge_plan(
     *,
@@ -362,66 +496,145 @@ def persist_profile_merge_plan(
 ) -> IdeaProfile:
     if current_profile.idea_id != idea_id:
         raise ValueError(
-            "current_profile does not belong to idea_id"
+            "current_profile does not "
+            "belong to idea_id"
         )
 
-    if not merge_plan.accepted_updates:
+    if (
+        merge_plan.conflicts
+        or merge_plan.unknown_conflicts
+    ):
+        raise ValueError(
+            "Cannot persist a profile merge "
+            "plan containing conflicts"
+        )
+
+    if (
+        not merge_plan.accepted_updates
+        and not (
+            merge_plan
+            .accepted_unknown_fields
+        )
+    ):
         return current_profile
 
     next_metadata = dict(
-        current_profile.profile_metadata or {}
+        current_profile.profile_metadata
+        or {}
     )
-    accepted_field_names: set[str] = set()
 
-    for update in merge_plan.accepted_updates:
-        field_name = update.field.value
-        accepted_field_names.add(field_name)
+    accepted_field_names = {
+        update.field.value
+        for update
+        in merge_plan.accepted_updates
+    }
 
-        metadata = ProfileFieldMetadata(
-            provenance=update.provenance,
-            value_kind=update.value_kind,
-            confidence=update.confidence,
-            source_message_id=source_message_id,
+    for update in (
+        merge_plan.accepted_updates
+    ):
+        field_name = (
+            update.field.value
         )
 
-        next_metadata[field_name] = metadata.model_dump(
+        metadata = (
+            ProfileFieldMetadata(
+                provenance=(
+                    update.provenance
+                ),
+                value_kind=(
+                    update.value_kind
+                ),
+                confidence=(
+                    update.confidence
+                ),
+                source_message_id=(
+                    source_message_id
+                ),
+            )
+        )
+
+        next_metadata[
+            field_name
+        ] = metadata.model_dump(
             mode="json"
         )
 
+    # لو المستخدم جاوب على field
+    # كانت UNKNOWN قبل كده،
+    # نشيلها من unknown_fields.
     next_unknown_fields = [
         field_name
-        for field_name in (current_profile.unknown_fields or [])
-        if field_name not in accepted_field_names
+        for field_name in (
+            current_profile.unknown_fields
+            or []
+        )
+        if (
+            field_name
+            not in accepted_field_names
+        )
     ]
+
+    # لو المستخدم قال صراحة
+    # إنه مش عارف field جديدة،
+    # نسجلها كـ UNKNOWN.
+    for field in (
+        merge_plan
+        .accepted_unknown_fields
+    ):
+        field_name = field.value
+
+        if (
+            field_name
+            not in next_unknown_fields
+        ):
+            next_unknown_fields.append(
+                field_name
+            )
 
     readiness_result = (
         evaluate_profile_readiness(
             profile_data=(
-                merge_plan.candidate_profile_data
+                merge_plan
+                .candidate_profile_data
             ),
-            profile_metadata=next_metadata,
-            unknown_fields=next_unknown_fields,
+            profile_metadata=(
+                next_metadata
+            ),
+            unknown_fields=(
+                next_unknown_fields
+            ),
         )
     )
 
     new_profile = IdeaProfile(
         idea_id=idea_id,
-        version=current_profile.version + 1,
+        version=(
+            current_profile.version + 1
+        ),
         readiness=(
-            readiness_result.readiness.value
+            readiness_result
+            .readiness
+            .value
         ),
         profile_data=dict(
-            merge_plan.candidate_profile_data
+            merge_plan
+            .candidate_profile_data
         ),
-        profile_metadata=next_metadata,
-        unknown_fields=next_unknown_fields,
+        profile_metadata=(
+            next_metadata
+        ),
+        unknown_fields=(
+            next_unknown_fields
+        ),
     )
 
-    db.add(new_profile)
+    db.add(
+        new_profile
+    )
+
     db.flush()
 
     return new_profile
-
 
 def _has_user_grounded_value(
     *,
