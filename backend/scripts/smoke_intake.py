@@ -1,30 +1,42 @@
 from uuid import uuid4
 
 from app.chat.context import WorkingContext
+from app.llm.gateway import LLMGatewayError
+from app.schemas.intake import (
+    ProfileField,
+    ProfileValueKind,
+)
 from app.services.intake_extraction import (
     IntakeExtractionService,
 )
 
 
 CASES = [
-    "عايز أعمل SaaS لإدارة الجيمات في مصر.",
-
     (
-        "هستهدف أصحاب الجيمات المستقلة، "
-        "والميزانية المبدئية حوالي 500 ألف جنيه."
+        "basic idea",
+        "عايز أعمل SaaS لإدارة الجيمات في مصر.",
     ),
-
     (
-        "أنا مش عارف الـ revenue model لسه."
+        "customers and budget",
+        (
+            "هستهدف أصحاب الجيمات المستقلة، "
+            "والميزانية المبدئية حوالي 500 ألف جنيه."
+        ),
     ),
-
     (
-        "خلينا نفترض مؤقتًا إن الاشتراك "
-        "هيكون 2000 جنيه شهريًا."
+        "declared unknown",
+        "أنا مش عارف الـ revenue model لسه.",
     ),
-
     (
-        "بدل مصر أنا بفكر أبدأ في السعودية."
+        "explicit working assumption",
+        (
+            "خلينا نفترض مؤقتًا إن العميل المستهدف "
+            "هو أصحاب الجيمات المستقلة."
+        ),
+    ),
+    (
+        "possible contradiction",
+        "بدل مصر أنا بفكر أبدأ في السعودية.",
     ),
 ]
 
@@ -47,29 +59,104 @@ def build_context(
     )
 
 
-def main() -> None:
-    service = IntakeExtractionService()
+def validate_case(
+    index: int,
+    result,
+) -> list[str]:
+    update_fields = {
+        update.field
+        for update in result.updates
+    }
+    unknown_fields = set(
+        result.unknown_fields
+    )
+    problems: list[str] = []
 
-    for index, message in enumerate(
+    if (
+        index == 1
+        and ProfileField.TARGET_COUNTRY
+        not in update_fields
+    ):
+        problems.append(
+            "expected target_country extraction"
+        )
+
+    if index == 2:
+        for expected_field in (
+            ProfileField.TARGET_CUSTOMERS,
+            ProfileField.BUDGET,
+        ):
+            if expected_field not in update_fields:
+                problems.append(
+                    "expected extraction for "
+                    f"{expected_field.value}"
+                )
+
+    if (
+        index == 3
+        and ProfileField.REVENUE_MODEL
+        not in unknown_fields
+    ):
+        problems.append(
+            "expected revenue_model in unknown_fields"
+        )
+
+    if index == 4:
+        if not any(
+            update.value_kind
+            == ProfileValueKind.ASSUMPTION
+            for update in result.updates
+        ):
+            problems.append(
+                "expected at least one ASSUMPTION update"
+            )
+
+    if (
+        index == 5
+        and ProfileField.TARGET_COUNTRY
+        not in update_fields
+    ):
+        problems.append(
+            "expected proposed target_country update"
+        )
+
+    return problems
+
+
+def main() -> int:
+    service = IntakeExtractionService()
+    failures = 0
+
+    for index, (
+        label,
+        message,
+    ) in enumerate(
         CASES,
         start=1,
     ):
+        print()
+        print("=" * 70)
         print(
-            f"\n{'=' * 70}"
+            f"CASE {index}: {label}"
         )
-        print(
-            f"CASE {index}"
-        )
-        print(
-            f"USER: {message}"
-        )
-        print(
-            "-" * 70
-        )
+        print(f"USER: {message}")
+        print("-" * 70)
 
-        result = service.extract(
-            build_context(message)
-        )
+        try:
+            result = service.extract(
+                build_context(message)
+            )
+
+        except (
+            LLMGatewayError,
+            ValueError,
+        ) as exc:
+            failures += 1
+            print(
+                "FAIL - "
+                f"{type(exc).__name__}: {exc}"
+            )
+            continue
 
         print(
             result.model_dump_json(
@@ -77,6 +164,33 @@ def main() -> None:
             )
         )
 
+        problems = validate_case(
+            index,
+            result,
+        )
+
+        if problems:
+            failures += 1
+            print(
+                "FAIL - "
+                + "; ".join(problems)
+            )
+        else:
+            print("PASS")
+
+    print()
+    print("=" * 70)
+
+    if failures:
+        print(
+            f"SMOKE RESULT: FAIL "
+            f"({failures} case(s) failed)"
+        )
+        return 1
+
+    print("SMOKE RESULT: PASS")
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
