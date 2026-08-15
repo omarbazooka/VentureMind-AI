@@ -6,10 +6,20 @@ from pydantic import BaseModel, ValidationError
 from app.core.config import settings
 
 
-StructuredOutputT = TypeVar( # TypeVar --> subclass from BaseModel with Structured
+StructuredOutputT = TypeVar(
     "StructuredOutputT",
-    bound=BaseModel, # to collect model_json_schema(),  model_validate_json()
+    bound=BaseModel,
 )
+
+_UNSUPPORTED_GEMINI_JSON_SCHEMA_KEYS = frozenset(
+    {
+        "default",
+        "minLength",
+        "maxLength",
+    }
+)
+
+
 def _sanitize_gemini_json_schema(
     value: Any,
 ) -> Any:
@@ -18,20 +28,21 @@ def _sanitize_gemini_json_schema(
             key: _sanitize_gemini_json_schema(
                 nested_value
             )
-            for key, nested_value
-            in value.items()
-            if key != "default"
+            for key, nested_value in value.items()
+            if (
+                key
+                not in _UNSUPPORTED_GEMINI_JSON_SCHEMA_KEYS
+            )
         }
 
     if isinstance(value, list):
         return [
-            _sanitize_gemini_json_schema(
-                item
-            )
+            _sanitize_gemini_json_schema(item)
             for item in value
         ]
 
     return value
+
 
 class LLMGatewayError(RuntimeError):
     pass
@@ -62,7 +73,11 @@ class LLMGateway:
             )
 
         self._client = genai.Client(
-            api_key=settings.gemini_api_key.get_secret_value()
+            api_key=(
+                settings
+                .gemini_api_key
+                .get_secret_value()
+            )
         )
 
     def generate_structured(
@@ -74,13 +89,15 @@ class LLMGateway:
         response_model: type[StructuredOutputT],
     ) -> StructuredOutputT:
         failure_reasons: list[str] = []
-        last_validation_error: ValidationError | None = None
+        last_validation_error: (
+            ValidationError | None
+        ) = None
+
         provider_schema = (
             _sanitize_gemini_json_schema(
                 response_model.model_json_schema()
             )
         )
-
 
         for attempt in range(
             1,
@@ -99,15 +116,24 @@ class LLMGateway:
                 )
 
             try:
-                interaction = self._client.interactions.create(
-                    model=model,
-                    system_instruction=current_system_prompt,
-                    input=user_prompt,
-                    response_format={
-                        "type": "text",
-                        "mime_type": "application/json",
-                        "schema": provider_schema,
-                    },
+                response = (
+                    self._client
+                    .models
+                    .generate_content(
+                        model=model,
+                        contents=user_prompt,
+                        config={
+                            "system_instruction": (
+                                current_system_prompt
+                            ),
+                            "response_mime_type": (
+                                "application/json"
+                            ),
+                            "response_json_schema": (
+                                provider_schema
+                            ),
+                        },
+                    )
                 )
 
             except Exception as exc:
@@ -115,7 +141,7 @@ class LLMGateway:
                     "LLM provider request failed"
                 ) from exc
 
-            output_text = interaction.output_text
+            output_text = response.text
 
             if not output_text:
                 failure_reasons.append(
@@ -124,15 +150,17 @@ class LLMGateway:
                 continue
 
             try:
-                return response_model.model_validate_json(
-                    output_text
+                return (
+                    response_model
+                    .model_validate_json(
+                        output_text
+                    )
                 )
 
             except ValidationError as exc:
                 failure_reasons.append(
                     "validation_error"
                 )
-
                 last_validation_error = exc
 
         error = LLMInvalidOutputError(
