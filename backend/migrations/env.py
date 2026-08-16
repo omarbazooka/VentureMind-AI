@@ -8,6 +8,9 @@ from app.models.idea import Idea  # noqa: F401
 from app.models.chat_session import ChatSession
 from app.models.message import Message
 from app.models.idea_profile import IdeaProfile
+from app.models.analysis_run import AnalysisRun  # noqa: F401
+from app.models.analysis_stage_run import AnalysisStageRun  # noqa: F401
+from app.models.analysis_result import AnalysisResult  # noqa: F401
 from alembic import context
 
 # this is the Alembic Config object, which provides
