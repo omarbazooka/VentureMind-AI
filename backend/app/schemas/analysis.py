@@ -1,4 +1,11 @@
+from datetime import datetime
 from enum import StrEnum
+from typing import Any
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+from app.schemas.intake import ProfileReadinessStatus
 
 
 class AnalysisRunStatus(StrEnum):
@@ -22,3 +29,24 @@ class AnalysisStageStatus(StrEnum):
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+
+
+class AnalysisProfileSnapshot(BaseModel):
+    readiness: ProfileReadinessStatus
+    profile_data: dict[str, Any]
+    profile_metadata: dict[
+        str,
+        dict[str, Any],
+    ] = Field(default_factory=dict)
+    unknown_fields: list[str] = Field(
+        default_factory=list,
+    )
+
+
+class AnalysisRunCreateResponse(BaseModel):
+    run_id: UUID
+    idea_id: UUID
+    profile_id: UUID
+    profile_version: int = Field(ge=1)
+    status: AnalysisRunStatus
+    created_at: datetime
