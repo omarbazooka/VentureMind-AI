@@ -5,27 +5,28 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
-from app.models.chat_session import ChatSession
-from app.models.idea import Idea
-from app.models.message import Message
-from app.schemas.chat import ChatMessageCreate, ChatMessageResponse
 from app.chat.context import build_working_context
 from app.chat.controller import ChatController
 from app.chat.orchestrator import TurnOrchestratorError
+from app.core.database import get_db
 from app.llm.gateway import LLMGatewayError
-
+from app.models.chat_session import ChatSession
+from app.models.idea import Idea
+from app.models.message import Message
 from app.schemas.chat import (
     ChatMessageCreate,
     ChatMessageResponse,
     ChatTurnResponse,
 )
+
+
 router = APIRouter(
     prefix="/ideas",
     tags=["chat"],
 )
 
 DbSession = Annotated[Session, Depends(get_db)]
+
 
 def get_chat_controller() -> ChatController:
     return ChatController()
@@ -35,6 +36,7 @@ ChatControllerDep = Annotated[
     ChatController,
     Depends(get_chat_controller),
 ]
+
 
 @router.post(
     "/{idea_id}/messages",
@@ -63,9 +65,7 @@ def create_message(
         .where(
             ChatSession.idea_id == idea_id
         )
-        .order_by(
-            ChatSession.created_at.asc()
-        )
+        .order_by(ChatSession.created_at.asc())
         .limit(1)
     )
 
@@ -103,12 +103,16 @@ def create_message(
         turn_result = controller.handle_message(
             user_message.content,
             context,
+            db=db,
         )
 
     except LLMGatewayError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="AI service failed to process the message",
+            detail=(
+                "AI service failed to process "
+                "the message"
+            ),
         ) from exc
 
     except TurnOrchestratorError as exc:
@@ -142,7 +146,20 @@ def create_message(
             content=assistant_message.content,
             created_at=assistant_message.created_at,
         ),
+        clarification=turn_result.clarification,
+        profile_version=(
+            turn_result.profile_version
+        ),
+        profile_readiness=(
+            turn_result.profile_readiness
+        ),
+        conflicts=turn_result.conflicts,
+        unknown_conflicts=(
+            turn_result.unknown_conflicts
+        ),
     )
+
+
 @router.get(
     "/{idea_id}/messages",
     response_model=list[ChatMessageResponse],
@@ -151,8 +168,11 @@ def get_messages(
     idea_id: UUID,
     db: DbSession,
 ) -> list[ChatMessageResponse]:
-    idea = db.get(Idea, idea_id)
-    
+    idea = db.get(
+        Idea,
+        idea_id,
+    )
+
     if idea is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -161,23 +181,32 @@ def get_messages(
 
     session_statement = (
         select(ChatSession)
-        .where(ChatSession.idea_id == idea_id)
+        .where(
+            ChatSession.idea_id == idea_id
+        )
         .order_by(ChatSession.created_at.asc())
         .limit(1)
     )
-    # need one object
-    chat_session = db.scalar(session_statement)
+
+    chat_session = db.scalar(
+        session_statement
+    )
 
     if chat_session is None:
         return []
 
     messages_statement = (
         select(Message)
-        .where(Message.session_id == chat_session.id)
+        .where(
+            Message.session_id
+            == chat_session.id
+        )
         .order_by(Message.created_at.asc())
     )
-    # need more objects
-    messages = db.scalars(messages_statement).all()
+
+    messages = db.scalars(
+        messages_statement
+    ).all()
 
     return [
         ChatMessageResponse(

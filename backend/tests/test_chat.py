@@ -3,6 +3,7 @@ from app.chat.controller import ChatTurnResult
 from app.llm.gateway import LLMGatewayError
 from app.main import app
 from app.schemas.chat import ChatTurnStatus
+from app.schemas.intake import ProfileReadinessStatus
 from app.schemas.turn import (
     ExecutionMode,
     Intent,
@@ -48,6 +49,7 @@ class FakeChatController:
         self,
         user_message,
         context,
+        db=None,
     ):
         return ChatTurnResult(
             status=ChatTurnStatus.COMPLETED,
@@ -56,11 +58,33 @@ class FakeChatController:
         )
 
 
+class ReadyChatController:
+    def handle_message(
+        self,
+        user_message,
+        context,
+        db=None,
+    ):
+        return ChatTurnResult(
+            status=(
+                ChatTurnStatus.READY_FOR_ANALYSIS
+            ),
+            response_text="Ready for analysis.",
+            turn_understanding=build_general_chat_turn(),
+            profile_version=3,
+            profile_readiness=(
+                ProfileReadinessStatus
+                .READY_FOR_ANALYSIS
+            ),
+        )
+
+
 class FailingChatController:
     def handle_message(
         self,
         user_message,
         context,
+        db=None,
     ):
         raise LLMGatewayError(
             "provider failed"
@@ -129,6 +153,46 @@ def test_create_message_persists_user_and_assistant(
         assert (
             messages[1]["content"]
             == "Hi from VentureMind."
+        )
+
+    finally:
+        app.dependency_overrides.pop(
+            get_chat_controller,
+            None,
+        )
+
+
+def test_create_message_returns_intake_metadata(
+    client,
+):
+    idea_id = create_test_idea(
+        client
+    )
+
+    app.dependency_overrides[
+        get_chat_controller
+    ] = lambda: ReadyChatController()
+
+    try:
+        response = client.post(
+            f"/api/v1/ideas/{idea_id}/messages",
+            json={
+                "content": "Egypt is my target market."
+            },
+        )
+
+        assert response.status_code == 201
+
+        data = response.json()
+
+        assert (
+            data["status"]
+            == "READY_FOR_ANALYSIS"
+        )
+        assert data["profile_version"] == 3
+        assert (
+            data["profile_readiness"]
+            == "READY_FOR_ANALYSIS"
         )
 
     finally:
