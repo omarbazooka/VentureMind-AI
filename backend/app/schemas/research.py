@@ -1,6 +1,11 @@
 from datetime import datetime
 from enum import StrEnum
+from uuid import UUID
 
+from app.schemas.analysis import (
+    AnalysisProfileSnapshot,
+    AnalysisStage,
+)
 from pydantic import (
     AnyHttpUrl,
     BaseModel,
@@ -357,3 +362,22 @@ class CustomerAnalysis(BaseModel):
         )
 
         return self
+    
+
+
+
+
+class ResearchStageClaim(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid"
+    )
+
+    stage_run_id: UUID
+    analysis_run_id: UUID
+    stage: AnalysisStage
+
+    attempt: int = Field(
+        ge=1,
+    )
+
+    profile_snapshot: AnalysisProfileSnapshot
