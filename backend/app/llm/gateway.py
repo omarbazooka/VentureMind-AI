@@ -80,6 +80,45 @@ class LLMGateway:
             )
         )
 
+    def generate_text(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        config: dict[str, Any] = {}
+
+        if system_prompt.strip():
+            config["system_instruction"] = (
+                system_prompt
+            )
+
+        try:
+            response = (
+                self._client
+                .models
+                .generate_content(
+                    model=model,
+                    contents=user_prompt,
+                    config=config,
+                )
+            )
+
+        except Exception as exc:
+            raise LLMGatewayError(
+                "LLM provider request failed"
+            ) from exc
+
+        output_text = response.text
+
+        if not output_text:
+            raise LLMInvalidOutputError(
+                "LLM returned empty text output"
+            )
+
+        return output_text
+
     def generate_structured(
         self,
         *,

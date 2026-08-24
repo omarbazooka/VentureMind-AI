@@ -310,3 +310,87 @@ def test_generate_structured_sanitizes_provider_schema():
         result.children[0].label
         == "valid"
     )
+
+
+def test_generate_text_returns_text():
+    client = FakeGeminiClient(
+        text="Market research response"
+    )
+
+    gateway = LLMGateway(
+        client=client
+    )
+
+    result = gateway.generate_text(
+        model="test-model",
+        system_prompt=(
+            "You are a market analyst."
+        ),
+        user_prompt=(
+            "Research the market."
+        ),
+    )
+
+    assert (
+        result
+        == "Market research response"
+    )
+
+    call = client.models.calls[0]
+
+    assert (
+        call["model"]
+        == "test-model"
+    )
+
+    assert (
+        call["contents"]
+        == "Research the market."
+    )
+
+    assert (
+        call["config"][
+            "system_instruction"
+        ]
+        == "You are a market analyst."
+    )
+
+
+def test_generate_text_rejects_empty_output():
+    client = FakeGeminiClient(
+        text=""
+    )
+
+    gateway = LLMGateway(
+        client=client
+    )
+
+    with pytest.raises(
+        LLMInvalidOutputError
+    ):
+        gateway.generate_text(
+            model="test-model",
+            system_prompt="Test",
+            user_prompt="Hello",
+        )
+
+
+def test_generate_text_normalizes_provider_error():
+    client = FakeGeminiClient(
+        error=RuntimeError(
+            "provider exploded"
+        )
+    )
+
+    gateway = LLMGateway(
+        client=client
+    )
+
+    with pytest.raises(
+        LLMGatewayError
+    ):
+        gateway.generate_text(
+            model="test-model",
+            system_prompt="Test",
+            user_prompt="Hello",
+        )
