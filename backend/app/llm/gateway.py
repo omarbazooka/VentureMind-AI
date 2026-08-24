@@ -19,21 +19,42 @@ _UNSUPPORTED_GEMINI_JSON_SCHEMA_KEYS = frozenset(
     }
 )
 
+_SUPPORTED_GEMINI_STRING_FORMATS = frozenset(
+    {
+        "date-time",
+        "date",
+        "time",
+    }
+)
+
 
 def _sanitize_gemini_json_schema(
     value: Any,
 ) -> Any:
     if isinstance(value, dict):
-        return {
-            key: _sanitize_gemini_json_schema(
-                nested_value
-            )
-            for key, nested_value in value.items()
+        sanitized: dict[str, Any] = {}
+
+        for key, nested_value in value.items():
             if (
                 key
-                not in _UNSUPPORTED_GEMINI_JSON_SCHEMA_KEYS
+                in _UNSUPPORTED_GEMINI_JSON_SCHEMA_KEYS
+            ):
+                continue
+
+            if (
+                key == "format"
+                and nested_value
+                not in _SUPPORTED_GEMINI_STRING_FORMATS
+            ):
+                continue
+
+            sanitized[key] = (
+                _sanitize_gemini_json_schema(
+                    nested_value
+                )
             )
-        }
+
+        return sanitized
 
     if isinstance(value, list):
         return [
