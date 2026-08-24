@@ -31,6 +31,7 @@ def make_search_result(
         query=query,
         items=[
             WebSearchItem(
+                source_id="web_test_source",
                 title="Example Market Source",
                 url=(
                     "https://example.com/"

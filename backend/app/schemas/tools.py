@@ -28,6 +28,11 @@ class WebSearchItem(BaseModel):
         extra="forbid"
     )
 
+    source_id: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+
     title: str = Field(
         min_length=1,
         max_length=500,

@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     # SecretStr to don't leak the apis in logs 
     gemini_api_key: SecretStr | None = None
     groq_api_key: SecretStr | None = None
+    firecrawl_api_key: SecretStr | None = None
 
     turn_understanding_model: str = "gemini-3.1-flash-lite"
 
