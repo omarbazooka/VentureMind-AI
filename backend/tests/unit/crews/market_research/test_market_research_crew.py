@@ -13,6 +13,12 @@ from app.crews.market_research.crew import (
     MarketResearchCrewError,
     MarketResearchCrewRunner,
 )
+from app.research.evidence import (
+    ResearchEvidenceLedger,
+)
+from app.research.market_evidence import (
+    MarketAnalysisDraft,
+)
 from app.schemas.analysis import (
     AnalysisProfileSnapshot,
     AnalysisStage,
@@ -91,14 +97,13 @@ def make_claim(
     )
 
 
-def make_market_result() -> MarketAnalysis:
-    return MarketAnalysis(
+def make_market_draft() -> MarketAnalysisDraft:
+    return MarketAnalysisDraft(
         summary=(
             "External market evidence "
             "is not available in this unit test."
         ),
         findings=[],
-        evidence_sources=[],
         evidence_quality=(
             ResearchEvidenceQuality
             .INSUFFICIENT
@@ -118,6 +123,14 @@ def make_runner() -> MarketResearchCrewRunner:
         ),
         research_tool=(
             FakeMarketResearchTool()
+        ),
+        evidence_ledger=(
+            ResearchEvidenceLedger(
+                stage=(
+                    AnalysisStage
+                    .MARKET_RESEARCH
+                )
+            )
         ),
     )
 
@@ -140,9 +153,7 @@ def test_builds_market_crew():
     )
 
     assert agent.allow_delegation is False
-
     assert agent.max_iter == 6
-
     assert crew.process == Process.sequential
 
     assert research_task.agent is agent
@@ -160,25 +171,11 @@ def test_builds_market_crew():
     )
 
     assert (
-        "target geography"
-        in research_task.description
-    )
-
-    assert (
         "Never substitute a different industry"
         in research_task.description
     )
 
-    assert (
-        "Do not create the final MarketAnalysis"
-        in research_task.description
-    )
-
-    assert (
-        research_task.output_pydantic
-        is None
-    )
-
+    assert research_task.output_pydantic is None
     assert len(research_task.tools) == 1
 
     assert (
@@ -188,11 +185,10 @@ def test_builds_market_crew():
 
     assert (
         synthesis_task.output_pydantic
-        is MarketAnalysis
+        is MarketAnalysisDraft
     )
 
     assert synthesis_task.tools == []
-
     assert synthesis_task.context is not None
     assert len(synthesis_task.context) == 1
     assert (
@@ -201,32 +197,28 @@ def test_builds_market_crew():
     )
 
     assert (
-        "If a statement has no supporting "
-        "source ID"
+        "Do NOT output source URLs"
         in synthesis_task.description
     )
 
     assert (
-        "do not label it OBSERVED"
+        "Every numerical finding must reference"
         in synthesis_task.description
     )
 
 
-def test_runner_returns_market_analysis(
+def test_runner_returns_final_market_analysis(
     monkeypatch,
 ):
     runner = make_runner()
-
     claim = make_claim()
-
-    market_result = make_market_result()
+    market_draft = make_market_draft()
 
     fake_crew = Mock()
-
     fake_crew.kickoff.return_value = (
         CrewOutput(
             raw="",
-            pydantic=market_result,
+            pydantic=market_draft,
         )
     )
 
@@ -243,7 +235,12 @@ def test_runner_returns_market_analysis(
         MarketAnalysis,
     )
 
-    assert result == market_result
+    assert result.findings == []
+    assert result.evidence_sources == []
+    assert (
+        result.evidence_quality
+        == ResearchEvidenceQuality.INSUFFICIENT
+    )
 
     fake_crew.kickoff.assert_called_once()
 
@@ -255,7 +252,6 @@ def test_runner_returns_market_analysis(
     )
 
     assert "profile_snapshot" in kickoff_inputs
-
     assert "Gym management SaaS" in (
         kickoff_inputs["profile_snapshot"]
     )
@@ -264,17 +260,17 @@ def test_runner_returns_market_analysis(
 def test_runner_rejects_non_market_stage():
     runner = make_runner()
 
-    claim = make_claim(
-        stage=(
-            AnalysisStage
-            .COMPETITOR_INTELLIGENCE
-        )
-    )
-
     with pytest.raises(
         MarketResearchCrewError
     ):
-        runner(claim)
+        runner(
+            make_claim(
+                stage=(
+                    AnalysisStage
+                    .COMPETITOR_INTELLIGENCE
+                )
+            )
+        )
 
 
 def test_runner_rejects_missing_structured_output(
@@ -283,7 +279,6 @@ def test_runner_rejects_missing_structured_output(
     runner = make_runner()
 
     fake_crew = Mock()
-
     fake_crew.kickoff.return_value = (
         CrewOutput(
             raw="unstructured result",
@@ -303,3 +298,31 @@ def test_runner_rejects_missing_structured_output(
         runner(
             make_claim()
         )
+
+
+def test_runner_is_single_use(
+    monkeypatch,
+):
+    runner = make_runner()
+
+    fake_crew = Mock()
+    fake_crew.kickoff.return_value = (
+        CrewOutput(
+            raw="",
+            pydantic=make_market_draft(),
+        )
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "build_crew",
+        Mock(return_value=fake_crew),
+    )
+
+    runner(make_claim())
+
+    with pytest.raises(
+        MarketResearchCrewError,
+        match="single-use",
+    ):
+        runner(make_claim())
