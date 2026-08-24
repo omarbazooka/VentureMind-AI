@@ -108,7 +108,12 @@ class CrewAILLMGatewayAdapter(
             system_prompt,
             user_prompt,
         )
-
+    
+    def supports_function_calling(
+        self,
+    ) -> bool:
+        return False
+    
     def call(
         self,
         messages,

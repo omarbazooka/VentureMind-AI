@@ -215,3 +215,16 @@ def test_adapter_rejects_empty_messages():
         adapter.call(
             []
         )
+
+def test_adapter_disables_native_function_calling():
+    gateway = make_gateway()
+
+    adapter = make_adapter(
+        gateway
+    )
+
+    assert (
+        adapter
+        .supports_function_calling()
+        is False
+    )
