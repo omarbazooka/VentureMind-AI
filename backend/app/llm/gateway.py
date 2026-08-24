@@ -16,6 +16,8 @@ _UNSUPPORTED_GEMINI_JSON_SCHEMA_KEYS = frozenset(
         "default",
         "minLength",
         "maxLength",
+        "minItems",
+        "maxItems",
     }
 )
 
@@ -26,6 +28,60 @@ _SUPPORTED_GEMINI_STRING_FORMATS = frozenset(
         "time",
     }
 )
+
+
+def _extract_response_diagnostic(
+    response: Any,
+) -> str:
+    details: list[str] = []
+
+    candidates = getattr(
+        response,
+        "candidates",
+        None,
+    )
+    if candidates and len(candidates) > 0:
+        c = candidates[0]
+        finish_reason = getattr(
+            c,
+            "finish_reason",
+            None,
+        )
+        if finish_reason:
+            details.append(
+                f"finish_reason={finish_reason}"
+            )
+
+        finish_message = getattr(
+            c,
+            "finish_message",
+            None,
+        )
+        if finish_message:
+            details.append(
+                f"finish_message={finish_message}"
+            )
+
+    prompt_feedback = getattr(
+        response,
+        "prompt_feedback",
+        None,
+    )
+    if prompt_feedback:
+        block_reason = getattr(
+            prompt_feedback,
+            "block_reason",
+            None,
+        )
+        if block_reason:
+            details.append(
+                f"block_reason={block_reason}"
+            )
+
+    if not details:
+        return ""
+
+    return f" ({', '.join(details)})"
 
 
 def _sanitize_gemini_json_schema(
@@ -128,14 +184,20 @@ class LLMGateway:
 
         except Exception as exc:
             raise LLMGatewayError(
-                "LLM provider request failed"
+                f"LLM provider request failed: {exc}"
             ) from exc
 
-        output_text = response.text
+        try:
+            output_text = response.text
+        except Exception:
+            output_text = None
 
         if not output_text:
+            diag = _extract_response_diagnostic(
+                response
+            )
             raise LLMInvalidOutputError(
-                "LLM returned empty text output"
+                f"LLM returned empty text output{diag}"
             )
 
         return output_text
@@ -198,14 +260,20 @@ class LLMGateway:
 
             except Exception as exc:
                 raise LLMGatewayError(
-                    "LLM provider request failed"
+                    f"LLM provider request failed: {exc}"
                 ) from exc
 
-            output_text = response.text
+            try:
+                output_text = response.text
+            except Exception:
+                output_text = None
 
             if not output_text:
+                diag = _extract_response_diagnostic(
+                    response
+                )
                 failure_reasons.append(
-                    "empty_output"
+                    f"empty_output{diag}"
                 )
                 continue
 
@@ -233,3 +301,4 @@ class LLMGateway:
             raise error from last_validation_error
 
         raise error
+

@@ -394,3 +394,59 @@ def test_generate_text_normalizes_provider_error():
             system_prompt="Test",
             user_prompt="Hello",
         )
+
+
+def test_generate_structured_sanitizes_market_analysis_schema():
+    from app.schemas.research import MarketAnalysis
+
+    client = Mock()
+    client.models.generate_content.return_value = (
+        FakeResponse(
+            """
+            {
+                "summary": "Gym software market",
+                "evidence_quality": "INSUFFICIENT",
+                "limitations": ["Limited data"]
+            }
+            """
+        )
+    )
+
+    gateway = LLMGateway(
+        client=client
+    )
+
+    gateway.generate_structured(
+        model="test-model",
+        system_prompt="Analyze market.",
+        user_prompt="Research.",
+        response_model=MarketAnalysis,
+    )
+
+    call_kwargs = (
+        client.models
+        .generate_content
+        .call_args
+        .kwargs
+    )
+
+    schema = (
+        call_kwargs["config"][
+            "response_json_schema"
+        ]
+    )
+
+    def check_no_keys(d, forbidden):
+        if isinstance(d, dict):
+            for k, v in d.items():
+                assert k not in forbidden, f"Forbidden key '{k}' found in schema"
+                check_no_keys(v, forbidden)
+        elif isinstance(d, list):
+            for item in d:
+                check_no_keys(item, forbidden)
+
+    check_no_keys(
+        schema,
+        {"default", "minLength", "maxLength", "minItems", "maxItems"},
+    )
+

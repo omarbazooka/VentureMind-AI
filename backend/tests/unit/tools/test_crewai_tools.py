@@ -2,6 +2,9 @@ from unittest.mock import Mock
 
 import pytest
 
+from app.research.evidence import (
+    ResearchEvidenceLedger,
+)
 from app.schemas.analysis import (
     AnalysisStage,
 )
@@ -168,3 +171,88 @@ def test_web_search_tool_enforces_usage_limit():
         .call_count
         == 1
     )
+def test_web_search_tool_records_evidence():
+    gateway = make_gateway()
+
+    gateway.search_web.return_value = (
+        make_search_result(
+            query="gym software Egypt"
+        )
+    )
+
+    ledger = ResearchEvidenceLedger(
+        stage=(
+            AnalysisStage.MARKET_RESEARCH
+        )
+    )
+
+    tool = ControlledWebSearchTool(
+        gateway=gateway,
+        stage=(
+            AnalysisStage.MARKET_RESEARCH
+        ),
+        evidence_ledger=ledger,
+    )
+
+    tool.run(
+        query="gym software Egypt",
+        max_results=3,
+    )
+
+    assert ledger.source_ids == (
+        "web_test_source",
+    )
+
+    assert ledger.search_queries == (
+        "gym software Egypt",
+    )
+
+    source = ledger.get_source(
+        "web_test_source"
+    )
+
+    assert (
+        source.title
+        == "Example Market Source"
+    )
+
+    assert (
+        str(source.url)
+        == "https://example.com/market"
+    )
+
+    assert (
+        source.excerpt
+        == "Example market evidence."
+    )
+
+    assert (
+        source.retrieved_at
+        is not None
+    )
+
+def test_web_search_tool_rejects_mismatched_ledger_stage():
+    gateway = make_gateway()
+
+    ledger = ResearchEvidenceLedger(
+        stage=(
+            AnalysisStage
+            .COMPETITOR_INTELLIGENCE
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Evidence ledger stage "
+            "must match"
+        ),
+    ):
+        ControlledWebSearchTool(
+            gateway=gateway,
+            stage=(
+                AnalysisStage
+                .MARKET_RESEARCH
+            ),
+            evidence_ledger=ledger,
+        )
