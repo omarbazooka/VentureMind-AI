@@ -128,31 +128,11 @@ def test_builds_market_crew():
     crew = runner.build_crew()
 
     assert len(crew.agents) == 1
-    assert len(crew.tasks) == 1
+    assert len(crew.tasks) == 2
 
     agent = crew.agents[0]
-    task = crew.tasks[0]
-
-    assert (
-        "RESEARCH SUBJECT LOCK"
-        in task.description
-    )
-
-    assert (
-        "Do NOT research the market research "
-        "industry"
-        in task.description
-    )
-
-    assert (
-        "target geography"
-        in task.description
-    )
-
-    assert (
-        "Never substitute a different industry"
-        in task.description
-    )
+    research_task = crew.tasks[0]
+    synthesis_task = crew.tasks[1]
 
     assert (
         agent.role
@@ -165,15 +145,70 @@ def test_builds_market_crew():
 
     assert crew.process == Process.sequential
 
-    assert task.agent is agent
-
-    assert task.output_pydantic is MarketAnalysis
-
-    assert len(task.tools) == 1
+    assert research_task.agent is agent
+    assert synthesis_task.agent is agent
 
     assert (
-        task.tools[0].name
+        "RESEARCH SUBJECT LOCK"
+        in research_task.description
+    )
+
+    assert (
+        "Do NOT research the market research "
+        "industry"
+        in research_task.description
+    )
+
+    assert (
+        "target geography"
+        in research_task.description
+    )
+
+    assert (
+        "Never substitute a different industry"
+        in research_task.description
+    )
+
+    assert (
+        "Do not create the final MarketAnalysis"
+        in research_task.description
+    )
+
+    assert (
+        research_task.output_pydantic
+        is None
+    )
+
+    assert len(research_task.tools) == 1
+
+    assert (
+        research_task.tools[0].name
         == "fake_market_research"
+    )
+
+    assert (
+        synthesis_task.output_pydantic
+        is MarketAnalysis
+    )
+
+    assert synthesis_task.tools == []
+
+    assert synthesis_task.context is not None
+    assert len(synthesis_task.context) == 1
+    assert (
+        synthesis_task.context[0]
+        is research_task
+    )
+
+    assert (
+        "If a statement has no supporting "
+        "source ID"
+        in synthesis_task.description
+    )
+
+    assert (
+        "do not label it OBSERVED"
+        in synthesis_task.description
     )
 
 
