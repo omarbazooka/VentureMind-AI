@@ -34,7 +34,7 @@ class FakeSearchProvider:
                     source_id="web_test",
                     title="Test source",
                     url=(
-                        "https://example.com/"
+                        "https://real-source.example/"
                         "market"
                     ),
                     snippet=(
@@ -45,7 +45,7 @@ class FakeSearchProvider:
         )
 
 
-def test_runtime_wires_controlled_search_tool():
+def test_runtime_wires_controlled_search_and_shared_ledger():
     llm_gateway = Mock(
         spec=LLMGateway
     )
@@ -99,4 +99,27 @@ def test_runtime_wires_controlled_search_tool():
         .requests[0]
         .query
         == "gym software Egypt"
+    )
+
+    assert runner.evidence_ledger.source_ids == (
+        "web_test",
+    )
+
+    canonical_source = (
+        runner.evidence_ledger.get_source(
+            "web_test"
+        )
+    )
+
+    assert (
+        str(canonical_source.url)
+        == (
+            "https://real-source.example/"
+            "market"
+        )
+    )
+
+    assert (
+        canonical_source.retrieved_at
+        is not None
     )
