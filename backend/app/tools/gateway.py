@@ -48,7 +48,6 @@ class PageRetrievalProvider(Protocol):
     ) -> PageRetrievalResult:
         ...
 
-
 class ToolGatewayError(RuntimeError):
     pass
 
@@ -59,12 +58,22 @@ class ToolPermissionError(
     pass
 
 
+class ToolProviderNotConfiguredError(
+    ToolGatewayError
+):
+    pass
+
+
 class ToolGateway:
     def __init__(
         self,
         *,
-        web_search_provider: WebSearchProvider,
-        page_retrieval_provider: PageRetrievalProvider,
+        web_search_provider: (
+            WebSearchProvider | None
+        ) = None,
+        page_retrieval_provider: (
+            PageRetrievalProvider | None
+        ) = None,
     ) -> None:
         self._web_search_provider = (
             web_search_provider
@@ -102,6 +111,12 @@ class ToolGateway:
             tool=ToolName.WEB_SEARCH,
         )
 
+        if self._web_search_provider is None:
+            raise ToolProviderNotConfiguredError(
+                "WEB_SEARCH provider "
+                "is not configured"
+            )
+
         return (
             self._web_search_provider
             .search(request)
@@ -117,6 +132,15 @@ class ToolGateway:
             stage=stage,
             tool=ToolName.PAGE_RETRIEVAL,
         )
+
+        if (
+            self._page_retrieval_provider
+            is None
+        ):
+            raise ToolProviderNotConfiguredError(
+                "PAGE_RETRIEVAL provider "
+                "is not configured"
+            )
 
         return (
             self._page_retrieval_provider

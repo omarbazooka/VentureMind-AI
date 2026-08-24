@@ -134,6 +134,27 @@ def test_builds_market_crew():
     task = crew.tasks[0]
 
     assert (
+        "RESEARCH SUBJECT LOCK"
+        in task.description
+    )
+
+    assert (
+        "Do NOT research the market research "
+        "industry"
+        in task.description
+    )
+
+    assert (
+        "target geography"
+        in task.description
+    )
+
+    assert (
+        "Never substitute a different industry"
+        in task.description
+    )
+
+    assert (
         agent.role
         == "Market Research Analyst"
     )

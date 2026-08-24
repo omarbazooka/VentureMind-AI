@@ -11,6 +11,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_serializer,
     model_validator,
 )
 
@@ -60,6 +61,13 @@ class ResearchEvidenceSource(BaseModel):
         default=None,
         max_length=2000,
     )
+
+    @field_serializer("url")
+    def serialize_url(
+        self,
+        url: AnyHttpUrl | None,
+    ) -> str | None:
+        return str(url) if url is not None else None
 
     @model_validator(mode="after")
     def validate_source(
