@@ -8,6 +8,9 @@ from app.llm.crewai_adapter import (
 from app.llm.gateway import (
     LLMGateway,
 )
+from app.research.evidence import (
+    ResearchEvidenceLedger,
+)
 from app.schemas.analysis import (
     AnalysisStage,
 )
@@ -31,22 +34,8 @@ def build_market_research_runner(
     ) = None,
     model: str | None = None,
 ) -> MarketResearchCrewRunner:
-    """
-    Firecrawl provider
-        ↓
-    ToolGateway
-            ↓
-    ControlledWebSearchTool
+    """Build one isolated Market Research stage runtime."""
 
-    LLMGateway
-            ↓
-    CrewAI Adapter
-
-    Tool + Adapter
-            ↓
-    MarketResearchCrewRunner
-    """
-    
     resolved_llm_gateway = (
         llm_gateway
         if llm_gateway is not None
@@ -65,6 +54,10 @@ def build_market_research_runner(
         else settings.market_research_model
     )
 
+    evidence_ledger = ResearchEvidenceLedger(
+        stage=AnalysisStage.MARKET_RESEARCH
+    )
+
     tool_gateway = ToolGateway(
         web_search_provider=(
             resolved_search_provider
@@ -78,6 +71,7 @@ def build_market_research_runner(
                 AnalysisStage
                 .MARKET_RESEARCH
             ),
+            evidence_ledger=evidence_ledger,
             max_usage_count=4,
         )
     )
@@ -94,5 +88,5 @@ def build_market_research_runner(
     return MarketResearchCrewRunner(
         llm=crewai_llm,
         research_tool=research_tool,
+        evidence_ledger=evidence_ledger,
     )
-
