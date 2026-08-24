@@ -7,6 +7,13 @@ from crewai import (
 from crewai.llms.base_llm import BaseLLM
 from crewai.tools.base_tool import BaseTool
 
+from app.research.evidence import (
+    ResearchEvidenceLedger,
+)
+from app.research.market_evidence import (
+    MarketAnalysisDraft,
+    finalize_market_analysis,
+)
 from app.schemas.analysis import AnalysisStage
 from app.schemas.research import (
     MarketAnalysis,
@@ -26,9 +33,27 @@ class MarketResearchCrewRunner:
         *,
         llm: BaseLLM,
         research_tool: BaseTool,
+        evidence_ledger: ResearchEvidenceLedger,
     ) -> None:
+        if (
+            evidence_ledger.stage
+            != AnalysisStage.MARKET_RESEARCH
+        ):
+            raise ValueError(
+                "Market research runner requires "
+                "a MARKET_RESEARCH evidence ledger"
+            )
+
         self._llm = llm
         self._research_tool = research_tool
+        self._evidence_ledger = evidence_ledger
+        self._has_executed = False
+
+    @property
+    def evidence_ledger(
+        self,
+    ) -> ResearchEvidenceLedger:
+        return self._evidence_ledger
 
     def build_crew(self) -> Crew:
         market_agent = Agent(
@@ -126,7 +151,7 @@ class MarketResearchCrewRunner:
 
         synthesis_task = Task(
             description=(
-                "Create the final MarketAnalysis for the "
+                "Create a MarketAnalysis draft for the "
                 "venture using only the FROZEN IDEA "
                 "PROFILE and the evidence dossier from "
                 "the previous research task.\n\n"
@@ -138,25 +163,21 @@ class MarketResearchCrewRunner:
                 "profile.\n"
                 "- Do not perform new research and do not "
                 "invent evidence.\n"
-                "- Only use WEB evidence sources that "
-                "appear in the research dossier.\n"
-                "- Preserve the exact source_id, title, "
-                "URL, and snippet for each relied-on web "
-                "source.\n"
-                "- Copy every relied-on WEB source into "
-                "evidence_sources with provenance WEB.\n"
-                "- A source snippet may be used as its "
-                "evidence excerpt when appropriate.\n"
+                "- Only reference source IDs that appear "
+                "in the research dossier and came from "
+                "the controlled research tool.\n"
+                "- Do NOT output source URLs, titles, "
+                "timestamps, provenance, or excerpts. "
+                "The application attaches canonical "
+                "source metadata after verification.\n"
                 "- Every OBSERVED finding must reference "
                 "one or more exact source IDs through "
                 "evidence_source_ids.\n"
-                "- Every evidence_source_id must match "
-                "a source present in evidence_sources.\n"
+                "- Every numerical finding must reference "
+                "one or more exact source IDs.\n"
                 "- If a statement has no supporting "
                 "source ID from the research dossier, "
                 "do not label it OBSERVED.\n"
-                "- Numerical findings require supporting "
-                "evidence source IDs.\n"
                 "- Clearly separate observation from "
                 "inference.\n"
                 "- If reliable evidence is unavailable, "
@@ -167,17 +188,18 @@ class MarketResearchCrewRunner:
                 "claims."
             ),
             expected_output=(
-                "A validated structured MarketAnalysis "
-                "containing a market summary, findings, "
-                "evidence sources, evidence quality, and "
-                "limitations."
+                "A structured MarketAnalysisDraft with "
+                "summary, findings that reference exact "
+                "source IDs, evidence quality, and "
+                "limitations. Source metadata is not "
+                "part of this AI output."
             ),
             agent=market_agent,
             context=[
                 research_task,
             ],
             tools=[],
-            output_pydantic=MarketAnalysis,
+            output_pydantic=MarketAnalysisDraft,
         )
 
         return Crew(
@@ -196,6 +218,12 @@ class MarketResearchCrewRunner:
         self,
         claim: ResearchStageClaim,
     ) -> MarketAnalysis:
+        if self._has_executed:
+            raise MarketResearchCrewError(
+                "Market research runner is single-use "
+                "so evidence cannot leak across stage runs"
+            )
+
         if (
             claim.stage
             != AnalysisStage.MARKET_RESEARCH
@@ -204,6 +232,8 @@ class MarketResearchCrewRunner:
                 "Market research crew received "
                 "a non-market research stage"
             )
+
+        self._has_executed = True
 
         crew = self.build_crew()
 
@@ -223,6 +253,13 @@ class MarketResearchCrewRunner:
                 "return structured output"
             )
 
-        return MarketAnalysis.model_validate(
+        draft = MarketAnalysisDraft.model_validate(
             result.pydantic
+        )
+
+        return finalize_market_analysis(
+            draft=draft,
+            evidence_ledger=(
+                self._evidence_ledger
+            ),
         )
