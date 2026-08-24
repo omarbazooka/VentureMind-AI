@@ -4,6 +4,9 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.models.analysis_result import AnalysisResult
+from app.research.market_evidence import (
+    MarketEvidenceVerificationError,
+)
 from app.schemas.analysis import AnalysisStage
 from app.schemas.research import (
     MarketAnalysis,
@@ -30,6 +33,7 @@ class MarketResearchExecutionError(
 ):
     pass
 
+
 def _mark_market_research_failed(
     *,
     session_factory: SessionFactory,
@@ -46,6 +50,7 @@ def _mark_market_research_failed(
         )
 
         db.commit()
+
 
 def execute_market_research_stage(
     *,
@@ -74,6 +79,23 @@ def execute_market_research_stage(
         research_result = runner(
             claim
         )
+
+    except MarketEvidenceVerificationError as exc:
+        _mark_market_research_failed(
+            session_factory=session_factory,
+            stage_run_id=stage_run_id,
+            error_code=(
+                "INVALID_MARKET_RESEARCH_EVIDENCE"
+            ),
+            error_message=(
+                "Market research failed deterministic "
+                "evidence verification."
+            ),
+        )
+
+        raise MarketResearchExecutionError(
+            "Market research evidence verification failed"
+        ) from exc
 
     except Exception as exc:
         _mark_market_research_failed(
