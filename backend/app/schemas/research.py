@@ -5,6 +5,7 @@ from uuid import UUID
 from app.schemas.analysis import (
     AnalysisProfileSnapshot,
     AnalysisStage,
+    AnalysisStageStatus,
 )
 from pydantic import (
     AnyHttpUrl,
@@ -34,6 +35,101 @@ class ResearchEvidenceQuality(StrEnum):
     MODERATE = "MODERATE"
     WEAK = "WEAK"
     INSUFFICIENT = "INSUFFICIENT"
+
+
+class ResearchGateDecision(StrEnum):
+    ACCEPT = "ACCEPT"
+    RETRY = "RETRY"
+    INSUFFICIENT = "INSUFFICIENT"
+
+
+class ResearchGateIssueCode(StrEnum):
+    STAGE_FAILED = "STAGE_FAILED"
+    WEAK_EVIDENCE = "WEAK_EVIDENCE"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+    RETRY_EXHAUSTED = "RETRY_EXHAUSTED"
+
+
+class ResearchStageGateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stage: AnalysisStage
+    attempt: int = Field(ge=1)
+    stage_status: AnalysisStageStatus
+    evidence_quality: ResearchEvidenceQuality | None = None
+    limitations: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+    error_code: str | None = Field(
+        default=None,
+        max_length=100,
+    )
+
+
+class ResearchStageGateAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stage: AnalysisStage
+    attempt: int = Field(ge=1)
+    stage_status: AnalysisStageStatus
+    evidence_quality: ResearchEvidenceQuality | None = None
+    limitations: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+    retry_eligible: bool = False
+    issue_codes: list[ResearchGateIssueCode] = Field(
+        default_factory=list,
+        max_length=10,
+    )
+
+
+class ResearchEvidenceGateResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: ResearchGateDecision
+    can_proceed: bool
+    assessments: list[ResearchStageGateAssessment] = Field(
+        min_length=3,
+        max_length=10,
+    )
+    retry_stages: list[AnalysisStage] = Field(
+        default_factory=list,
+        max_length=10,
+    )
+    insufficient_stages: list[AnalysisStage] = Field(
+        default_factory=list,
+        max_length=10,
+    )
+
+    @model_validator(mode="after")
+    def validate_gate_result(
+        self,
+    ) -> "ResearchEvidenceGateResult":
+        if self.decision == ResearchGateDecision.ACCEPT:
+            if (
+                not self.can_proceed
+                or self.retry_stages
+                or self.insufficient_stages
+            ):
+                raise ValueError(
+                    "ACCEPT requires can_proceed=True with no retry or insufficient stages"
+                )
+
+        if self.decision == ResearchGateDecision.RETRY:
+            if self.can_proceed or not self.retry_stages:
+                raise ValueError(
+                    "RETRY requires can_proceed=False and at least one retry stage"
+                )
+
+        if self.decision == ResearchGateDecision.INSUFFICIENT:
+            if not self.can_proceed or not self.insufficient_stages:
+                raise ValueError(
+                    "INSUFFICIENT requires can_proceed=True and explicit insufficient stages"
+                )
+
+        return self
 
 
 class ResearchEvidenceSource(BaseModel):
