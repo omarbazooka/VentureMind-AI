@@ -144,7 +144,7 @@ def test_builds_fast_competitor_crew():
 
     assert agent.role == "Competitor Intelligence Analyst"
     assert agent.allow_delegation is False
-    assert agent.max_iter == 6
+    assert agent.max_iter == 4
 
     assert research_task.agent is agent
     assert synthesis_task.agent is agent
@@ -159,10 +159,19 @@ def test_builds_fast_competitor_crew():
     assert "Never use more than two web searches" in (
         research_task.description
     )
+    assert "Do not over-constrain" in (
+        research_task.description
+    )
+    assert "three or four DISTINCT competitors" in (
+        research_task.description
+    )
     assert "MUST use controlled_batch_page_retrieval" in (
         research_task.description
     )
     assert "Absence of evidence is not evidence of absence" in (
+        research_task.description
+    )
+    assert "pricing to null" in (
         research_task.description
     )
 
@@ -172,7 +181,13 @@ def test_builds_fast_competitor_crew():
     assert "at most five competitor profiles" in (
         synthesis_task.description
     )
+    assert "do not collapse" in (
+        synthesis_task.description
+    )
     assert "strengths, weaknesses, pricing" in (
+        synthesis_task.description
+    )
+    assert "set pricing=null" in (
         synthesis_task.description
     )
 
