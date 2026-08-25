@@ -143,7 +143,7 @@ def test_builds_customer_crew():
 
     assert agent.role == "Customer Intelligence Analyst"
     assert agent.allow_delegation is False
-    assert agent.max_iter == 6
+    assert agent.max_iter == 4
 
     assert research_task.agent is agent
     assert synthesis_task.agent is agent
@@ -167,7 +167,13 @@ def test_builds_customer_crew():
     assert "Competitor/provider existence is supply-side evidence" in (
         research_task.description
     )
+    assert "PROFILE VS WEB PROVENANCE" in (
+        research_task.description
+    )
     assert "Do NOT mark provider/competitor presence as an OBSERVED DEMAND_SIGNAL" in (
+        synthesis_task.description
+    )
+    assert "Do NOT attach a web evidence_source_id to a fact merely copied from the profile" in (
         synthesis_task.description
     )
 

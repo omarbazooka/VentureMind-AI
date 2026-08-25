@@ -343,7 +343,22 @@ def test_accepts_decision_critical_observed_finding_with_page_retrieval():
 
 
 def test_accepts_inferred_critical_finding_without_page_retrieval():
-    ledger = _build_customer_ledger()
+    ledger = ResearchEvidenceLedger(stage=AnalysisStage.CUSTOMER_INTELLIGENCE)
+    ledger.record_web_search_result(
+        WebSearchResult(
+            query="egypt gym membership retention",
+            items=[
+                WebSearchItem(
+                    source_id="web_retention_1",
+                    title="Egypt Fitness Report",
+                    url="https://fitness.example/report",
+                    snippet="62% of surveyed gym operators report retention friction.",
+                )
+            ],
+        )
+    )
+
+    assert len(ledger.page_retrieval_urls) == 0
 
     draft = CustomerAnalysisDraft(
         summary="Customer summary.",
@@ -355,6 +370,96 @@ def test_accepts_inferred_critical_finding_without_page_retrieval():
                 confidence=0.5,
                 evidence_source_ids=["web_retention_1"],
                 is_numerical=False,
+            )
+        ],
+        evidence_quality=ResearchEvidenceQuality.MODERATE,
+        limitations=[],
+    )
+
+    result = finalize_customer_analysis(
+        draft=draft,
+        evidence_ledger=ledger,
+    )
+
+    assert len(result.findings) == 1
+
+
+def test_rejects_inferred_numerical_finding_without_page_retrieval():
+    ledger = ResearchEvidenceLedger(stage=AnalysisStage.CUSTOMER_INTELLIGENCE)
+    ledger.record_web_search_result(
+        WebSearchResult(
+            query="egypt gym membership retention",
+            items=[
+                WebSearchItem(
+                    source_id="web_retention_1",
+                    title="Egypt Fitness Report",
+                    url="https://fitness.example/report",
+                    snippet="62% of surveyed gym operators report retention friction.",
+                )
+            ],
+        )
+    )
+
+    draft = CustomerAnalysisDraft(
+        summary="Customer summary.",
+        findings=[
+            CustomerFinding(
+                statement="Estimated 60% of small gyms struggle with manual tracking.",
+                category=CustomerFindingCategory.VALUE_PROPOSITION,
+                claim_kind=ResearchClaimKind.INFERRED,
+                confidence=0.5,
+                evidence_source_ids=["web_retention_1"],
+                is_numerical=True,
+            )
+        ],
+        evidence_quality=ResearchEvidenceQuality.MODERATE,
+        limitations=[],
+    )
+
+    with pytest.raises(
+        CustomerEvidenceVerificationError,
+        match="require controlled detailed-page evidence",
+    ):
+        finalize_customer_analysis(
+            draft=draft,
+            evidence_ledger=ledger,
+        )
+
+
+def test_accepts_inferred_numerical_finding_with_page_retrieval():
+    ledger = ResearchEvidenceLedger(stage=AnalysisStage.CUSTOMER_INTELLIGENCE)
+    ledger.record_web_search_result(
+        WebSearchResult(
+            query="egypt gym membership retention",
+            items=[
+                WebSearchItem(
+                    source_id="web_retention_1",
+                    title="Egypt Fitness Report",
+                    url="https://fitness.example/report",
+                    snippet="62% of surveyed gym operators report retention friction.",
+                )
+            ],
+        )
+    )
+    ledger.record_page_retrieval_result(
+        PageRetrievalResult(
+            source_id="web_retention_1",
+            url="https://fitness.example/report",
+            title="Egypt Fitness Report",
+            content="Detailed report content.",
+        )
+    )
+
+    draft = CustomerAnalysisDraft(
+        summary="Customer summary.",
+        findings=[
+            CustomerFinding(
+                statement="Estimated 60% of small gyms struggle with manual tracking.",
+                category=CustomerFindingCategory.VALUE_PROPOSITION,
+                claim_kind=ResearchClaimKind.INFERRED,
+                confidence=0.5,
+                evidence_source_ids=["web_retention_1"],
+                is_numerical=True,
             )
         ],
         evidence_quality=ResearchEvidenceQuality.MODERATE,

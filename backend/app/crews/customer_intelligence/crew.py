@@ -83,7 +83,7 @@ class CustomerIntelligenceCrewRunner:
             ),
             llm=self._llm,
             allow_delegation=False,
-            max_iter=6,
+            max_iter=4,
             verbose=False,
         )
 
@@ -137,6 +137,7 @@ class CustomerIntelligenceCrewRunner:
                 "verified customer reviews, practitioner discussions) over indirect vendor marketing pages.\n"
                 "- Vendor marketing claims (e.g. 'gym owners struggle with X') MUST NOT be marked "
                 "as OBSERVED facts about the target customer with high confidence.\n"
+                "- PROFILE VS WEB PROVENANCE: The Frozen IdeaProfile defines the research subject but is not WEB evidence. Do not attach a web evidence_source_id to a fact merely copied from the profile unless that web source independently supports the same claim. If no external web source independently supports a profile statement (such as the target customer segment in the target geography), do NOT attach a fake web citation; either omit the SEGMENT finding or classify it accurately without unsupported web source IDs.\n"
                 "- NOT A PERSONA GENERATOR: Do NOT fabricate detailed fictional "
                 "personas (e.g. 'Ahmed, 37, Cairo gym owner, earns X EGP'). "
                 "Prefer segment-level findings. Any persona generated from "
@@ -186,6 +187,7 @@ class CustomerIntelligenceCrewRunner:
                 "- Do NOT output source URLs, titles, retrieval timestamps, "
                 "provenance, or excerpts. Application attaches canonical metadata.\n"
                 "- Every OBSERVED finding must cite exact evidence_source_ids and require direct source support.\n"
+                "- Do NOT attach a web evidence_source_id to a fact merely copied from the profile unless that web source independently supports the claim. If external web evidence does not independently verify the target customer segment in the target geography, omit the SEGMENT finding or treat as INFERRED without fake web citations.\n"
                 "- Do NOT mark provider/competitor presence as an OBSERVED DEMAND_SIGNAL. Provider presence is supply-side evidence; any demand implication from provider presence MUST be marked INFERRED or omitted.\n"
                 "- Do NOT mark unverified Egypt-specific customer assertions as OBSERVED if evidence is global or indirect vendor copy.\n"
                 "- Every numerical finding must cite exact evidence_source_ids and set is_numerical=true.\n"

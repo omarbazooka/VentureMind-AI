@@ -35,27 +35,31 @@
 
 ### 3. Customer Intelligence Stage
 - **Status:** COMPLETED & VALIDATED (FINAL HARDENING COMPLETE)
-- **Implementation:** `CustomerIntelligenceCrewRunner`, `CustomerAnalysisDraft`, `finalize_customer_analysis`, `execute_customer_intelligence_stage`.
+- **Implementation:** `CustomerIntelligenceCrewRunner` (`max_iter=4`), `CustomerAnalysisDraft`, `finalize_customer_analysis`, `execute_customer_intelligence_stage`.
 - **Hardening Rules:**
-  - Deterministic enforcement in `finalize_customer_analysis`: Non-insufficient customer results with decision-critical `OBSERVED` findings (`PAIN_POINT`, `ALTERNATIVE`, `BUYING_BEHAVIOR`, `DEMAND_SIGNAL`, or `is_numerical=True`) strictly require at least one controlled detailed page retrieval in `evidence_ledger.page_retrieval_urls`.
+  - Deterministic enforcement in `finalize_customer_analysis`: Non-insufficient customer results with decision-critical `OBSERVED` findings (`PAIN_POINT`, `ALTERNATIVE`, `BUYING_BEHAVIOR`, `DEMAND_SIGNAL`) or ANY `is_numerical=True` finding strictly require at least one controlled detailed page retrieval in `evidence_ledger.page_retrieval_urls`.
   - Supply-Side vs Customer Demand Rule: Competitor/provider existence is supply-side evidence, not direct customer-demand evidence. Provider presence alone MUST NOT be classified as an `OBSERVED DEMAND_SIGNAL` (must be `INFERRED` or omitted).
+  - Profile vs Web Provenance Rule: Frozen IdeaProfile defines the research subject but is not web evidence; web evidence source IDs must not be attached to facts merely copied from the profile unless independently supported.
   - Mandatory search attempt check before finalization (`search_queries` check).
   - Source quality & directness discipline: direct customer evidence preferred over vendor marketing claims.
   - Geography match: prohibits silently generalizing global gym-owner behavior to Egypt; requires explicit geographic bounding and `INFERRED` classification or limitation recording.
+  - Bounded agent iterations (`max_iter=4`), improving runtime latency from ~311.45s to ~19.40s (over 16x speed improvement).
   - Strict prohibition of persona fabrication (demographics/names/salaries), fake willingness-to-pay claims, or desk research PMF claims.
 - **Latest Live Validation Metrics:**
+  - `elapsed_seconds`: 19.40s
   - `search_count`: 1
-  - `page_retrieval_count`: 0
-  - `finding_count`: 3
-  - `source_count`: 4
-  - `evidence_quality`: INSUFFICIENT
+  - `page_retrieval_count`: 1
+  - `finding_count`: 11
+  - `source_count`: 1
+  - `evidence_quality`: MODERATE
+  - `customer_agent max_iter`: 4
   - `known primary-research limitations`: Honest, robust primary-research limitation tracking for Egyptian local gym workflows, WTP, and buying behavior.
 
 ---
 
 ## Current Backend Test Suite Status
-- **Targeted Unit Tests:** 17 passed cleanly in 6.34s.
-- **Full Backend Pytest Suite:** 220 passed cleanly in 51.59s (0 failed, 0 errors).
+- **Targeted Unit Tests:** 19 passed cleanly in 7.13s.
+- **Full Backend Pytest Suite:** 222 passed cleanly in 59.42s (0 failed, 0 errors).
 
 ---
 

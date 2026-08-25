@@ -34,14 +34,11 @@ def _has_decision_critical_observed_findings(
     findings: list[CustomerFinding],
 ) -> bool:
     for finding in findings:
+        if finding.is_numerical:
+            return True
         if (
             finding.claim_kind == ResearchClaimKind.OBSERVED
             and finding.category in DECISION_CRITICAL_CUSTOMER_CATEGORIES
-        ):
-            return True
-        if (
-            finding.is_numerical
-            and finding.claim_kind == ResearchClaimKind.OBSERVED
         ):
             return True
     return False
