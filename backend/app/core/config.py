@@ -11,6 +11,10 @@ class Settings(BaseSettings):
 
     turn_understanding_model: str = "gemini-3.1-flash-lite"
     market_research_model: str = "gemini-3.5-flash-lite"
+    competitor_intelligence_model: str = (
+        "gemini-3.5-flash-lite"
+    )
+    
     model_config = SettingsConfigDict(
         env_file = ".env",
         env_file_encoding= "utf-8",
