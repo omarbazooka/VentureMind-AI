@@ -1,4 +1,5 @@
 import sys
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -70,12 +71,9 @@ def build_smoke_claim(
                     "target_customers": [
                         "Independent gym owners"
                     ],
-                    "target_country": (
-                        "Egypt"
-                    ),
+                    "target_country": "Egypt",
                     "revenue_model": (
-                        "Monthly SaaS "
-                        "subscription"
+                        "Monthly SaaS subscription"
                     ),
                 },
                 profile_metadata={},
@@ -85,20 +83,74 @@ def build_smoke_claim(
     )
 
 
+def _validate_detail(
+    detail,
+) -> None:
+    if (
+        detail.claim_kind
+        == ResearchClaimKind.OBSERVED
+        and not detail.evidence_source_ids
+    ):
+        raise RuntimeError(
+            "Observed competitor detail "
+            "has no evidence source"
+        )
+
+    if (
+        detail.is_numerical
+        and not detail.evidence_source_ids
+    ):
+        raise RuntimeError(
+            "Numerical competitor detail "
+            "has no evidence source"
+        )
+
+
 def validate_smoke_result(
     *,
     result,
     runner,
 ) -> None:
-    if not (
-        runner
-        .evidence_ledger
-        .search_queries
-    ):
+    search_queries = (
+        runner.evidence_ledger.search_queries
+    )
+
+    if not search_queries:
         raise RuntimeError(
-            "Competitor intelligence "
-            "completed without attempting "
-            "controlled web research"
+            "Competitor intelligence completed "
+            "without controlled web research"
+        )
+
+    if len(search_queries) > 2:
+        raise RuntimeError(
+            "Competitor intelligence exceeded "
+            "the two-search latency budget"
+        )
+
+    if (
+        result.evidence_quality
+        != ResearchEvidenceQuality.INSUFFICIENT
+    ):
+        if not result.competitors:
+            raise RuntimeError(
+                "Non-insufficient Competitor "
+                "result has no competitor cards"
+            )
+
+        if not (
+            runner
+            .evidence_ledger
+            .page_retrieval_urls
+        ):
+            raise RuntimeError(
+                "Detailed competitor result was "
+                "created without page retrieval"
+            )
+
+    if len(result.competitors) > 5:
+        raise RuntimeError(
+            "Competitor result exceeded five "
+            "frontend-ready profiles"
         )
 
     claimed_source_ids = {
@@ -108,75 +160,61 @@ def validate_smoke_result(
         in finding.evidence_source_ids
     }
 
+    for competitor in result.competitors:
+        claimed_source_ids.add(
+            competitor.primary_source_id
+        )
+
+        details = [
+            *competitor.strengths,
+            *competitor.weaknesses,
+        ]
+
+        for optional_detail in (
+            competitor.pricing,
+            competitor.positioning,
+            competitor.target_audience,
+            competitor.geography,
+        ):
+            if optional_detail is not None:
+                details.append(optional_detail)
+
+        for detail in details:
+            _validate_detail(detail)
+            claimed_source_ids.update(
+                detail.evidence_source_ids
+            )
+
     finalized_source_ids = {
         source.source_id
-        for source
-        in result.evidence_sources
+        for source in result.evidence_sources
     }
 
-    if (
-        claimed_source_ids
-        != finalized_source_ids
-    ):
+    if claimed_source_ids != finalized_source_ids:
         raise RuntimeError(
-            "Final Competitor evidence "
-            "IDs do not match finding "
-            "citations"
+            "Final Competitor evidence IDs "
+            "do not match claimed citations"
         )
 
     if (
         result.evidence_quality
-        != (
-            ResearchEvidenceQuality
-            .INSUFFICIENT
-        )
+        != ResearchEvidenceQuality.INSUFFICIENT
         and not result.evidence_sources
     ):
         raise RuntimeError(
-            "Non-insufficient Competitor "
-            "result has no verified "
-            "evidence sources"
+            "Non-insufficient Competitor result "
+            "has no verified evidence sources"
         )
-
-    for finding in result.findings:
-        if (
-            finding.claim_kind
-            == ResearchClaimKind.OBSERVED
-            and not (
-                finding
-                .evidence_source_ids
-            )
-        ):
-            raise RuntimeError(
-                "Observed Competitor finding "
-                "has no evidence source"
-            )
-
-        if (
-            finding.is_numerical
-            and not (
-                finding
-                .evidence_source_ids
-            )
-        ):
-            raise RuntimeError(
-                "Numerical Competitor "
-                "finding has no evidence "
-                "source"
-            )
 
     for source in result.evidence_sources:
         if source.retrieved_at is None:
             raise RuntimeError(
-                "Verified competitor WEB "
-                "evidence is missing its "
-                "retrieval timestamp"
+                "Verified competitor evidence "
+                "is missing retrieval timestamp"
             )
 
         ledger_source = (
-            runner
-            .evidence_ledger
-            .get_source(
+            runner.evidence_ledger.get_source(
                 source.source_id
             )
         )
@@ -184,31 +222,14 @@ def validate_smoke_result(
         if (
             str(source.url)
             != str(ledger_source.url)
-        ):
-            raise RuntimeError(
-                "Final Competitor source "
-                "URL does not match the "
-                "Evidence Ledger"
-            )
-
-        if (
-            source.title
+            or source.title
             != ledger_source.title
-        ):
-            raise RuntimeError(
-                "Final Competitor source "
-                "title does not match the "
-                "Evidence Ledger"
-            )
-
-        if (
-            source.excerpt
+            or source.excerpt
             != ledger_source.excerpt
         ):
             raise RuntimeError(
-                "Final Competitor source "
-                "excerpt does not match "
-                "the Evidence Ledger"
+                "Final Competitor source metadata "
+                "does not match Evidence Ledger"
             )
 
 
@@ -219,8 +240,13 @@ def main() -> None:
 
     claim = build_smoke_claim()
 
-    result = runner(
-        claim
+    started_at = time.perf_counter()
+
+    result = runner(claim)
+
+    elapsed_seconds = (
+        time.perf_counter()
+        - started_at
     )
 
     validate_smoke_result(
@@ -234,41 +260,73 @@ def main() -> None:
         )
     )
 
+    print("\nRESEARCH PERFORMANCE:")
     print(
-        "\nVERIFIED SEARCH QUERIES:"
+        f"- elapsed_seconds: "
+        f"{elapsed_seconds:.2f}"
+    )
+    print(
+        "- search_count: "
+        f"{len(runner.evidence_ledger.search_queries)}"
+    )
+    print(
+        "- page_retrieval_count: "
+        f"{len(runner.evidence_ledger.page_retrieval_urls)}"
     )
 
+    print("\nVERIFIED SEARCH QUERIES:")
     for query in (
-        runner
-        .evidence_ledger
-        .search_queries
+        runner.evidence_ledger.search_queries
     ):
-        print(
-            f"- {query}"
-        )
+        print(f"- {query}")
 
-    print(
-        "\nVERIFIED SOURCE URLS:"
-    )
-
-    for source in (
-        result.evidence_sources
+    print("\nVERIFIED PAGE RETRIEVALS:")
+    for url in (
+        runner.evidence_ledger.page_retrieval_urls
     ):
+        print(f"- {url}")
+
+    print("\nVERIFIED SOURCE URLS:")
+    for source in result.evidence_sources:
         print(
-            f"- {source.source_id}: "
-            f"{source.url}"
+            f"- {source.source_id}: {source.url}"
         )
 
-    print(
-        "\nCOMPETITOR FINDINGS:"
-    )
-
-    for finding in result.findings:
+    print("\nCOMPETITOR CARDS:")
+    for competitor in result.competitors:
         print(
-            f"- [{finding.category.value}] "
-            f"[{finding.claim_kind.value}] "
-            f"{finding.statement}"
+            f"\n- {competitor.name} "
+            f"[{competitor.relationship.value}]"
         )
+        print(
+            "  relevance: "
+            f"{competitor.relevance_summary}"
+        )
+
+        if competitor.strengths:
+            print("  strengths:")
+            for strength in competitor.strengths:
+                print(
+                    "    - "
+                    f"[{strength.claim_kind.value}] "
+                    f"{strength.statement}"
+                )
+
+        if competitor.weaknesses:
+            print("  weaknesses:")
+            for weakness in competitor.weaknesses:
+                print(
+                    "    - "
+                    f"[{weakness.claim_kind.value}] "
+                    f"{weakness.statement}"
+                )
+
+        if competitor.pricing is not None:
+            print(
+                "  pricing: "
+                f"[{competitor.pricing.claim_kind.value}] "
+                f"{competitor.pricing.statement}"
+            )
 
 
 if __name__ == "__main__":
