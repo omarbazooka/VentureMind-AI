@@ -312,3 +312,119 @@ def test_finalizer_rejects_wrong_stage_ledger():
             draft=draft,
             evidence_ledger=ledger,
         )
+
+
+def test_finalizer_rejects_inferred_missing_feature_weakness():
+    ledger = make_ledger_with_detail_source()
+
+    profile = make_profile().model_copy(
+        update={
+            "weaknesses": [
+                CompetitorDetail(
+                    statement=(
+                        "Lacks native Arabic "
+                        "receipt printing."
+                    ),
+                    claim_kind=(
+                        ResearchClaimKind.INFERRED
+                    ),
+                    confidence=0.4,
+                    evidence_source_ids=[
+                        "web_real"
+                    ],
+                )
+            ]
+        }
+    )
+
+    draft = CompetitorAnalysisDraft(
+        summary="A competitor was verified.",
+        competitors=[profile],
+        findings=[],
+        evidence_quality=ResearchEvidenceQuality.STRONG,
+        limitations=[],
+    )
+
+    with pytest.raises(
+        CompetitorEvidenceVerificationError,
+        match="cannot assert missing features",
+    ):
+        finalize_competitor_analysis(
+            draft=draft,
+            evidence_ledger=ledger,
+        )
+
+
+def test_finalizer_rejects_unknown_pricing_as_pricing_detail():
+    ledger = make_ledger_with_detail_source()
+
+    profile = make_profile().model_copy(
+        update={
+            "pricing": CompetitorDetail(
+                statement="Pricing is not published.",
+                claim_kind=ResearchClaimKind.OBSERVED,
+                confidence=0.9,
+                evidence_source_ids=[
+                    "web_real"
+                ],
+            )
+        }
+    )
+
+    draft = CompetitorAnalysisDraft(
+        summary="A competitor was verified.",
+        competitors=[profile],
+        findings=[],
+        evidence_quality=ResearchEvidenceQuality.STRONG,
+        limitations=[],
+    )
+
+    with pytest.raises(
+        CompetitorEvidenceVerificationError,
+        match=(
+            "pricing must be represented "
+            "as pricing=None"
+        ),
+    ):
+        finalize_competitor_analysis(
+            draft=draft,
+            evidence_ledger=ledger,
+        )
+
+
+def test_finalizer_rejects_unpublished_pricing_as_weakness():
+    ledger = make_ledger_with_detail_source()
+
+    profile = make_profile().model_copy(
+        update={
+            "weaknesses": [
+                CompetitorDetail(
+                    statement=(
+                        "Pricing is not publicly disclosed."
+                    ),
+                    claim_kind=ResearchClaimKind.OBSERVED,
+                    confidence=0.9,
+                    evidence_source_ids=[
+                        "web_real"
+                    ],
+                )
+            ]
+        }
+    )
+
+    draft = CompetitorAnalysisDraft(
+        summary="A competitor was verified.",
+        competitors=[profile],
+        findings=[],
+        evidence_quality=ResearchEvidenceQuality.STRONG,
+        limitations=[],
+    )
+
+    with pytest.raises(
+        CompetitorEvidenceVerificationError,
+        match="must not be represented as a competitor weakness",
+    ):
+        finalize_competitor_analysis(
+            draft=draft,
+            evidence_ledger=ledger,
+        )
