@@ -16,59 +16,86 @@
 - **Status:** COMPLETED & VALIDATED
 - **Key Modules:** `LLMGateway`, `CrewAILLMGatewayAdapter`, `ToolGateway`, `ControlledWebSearchTool`, `ControlledBatchPageRetrievalTool`, `ResearchEvidenceLedger` single-use stage isolation, `FirecrawlWebSearchProvider`, `FirecrawlPageRetrievalProvider`.
 
-## Day 5 — Research Stage Crew AI Implementations & Reliability Hardening
+## Day 5 — Research Stage Crews + Research Join / Evidence Gate
+- **Status:** IMPLEMENTATION COMPLETE; FINAL FULL-SUITE REGRESSION PENDING IN PROJECT ENVIRONMENT
 
 ### 1. Market Research Stage
 - **Status:** COMPLETED & VALIDATED
 - **Implementation:** `MarketResearchCrewRunner`, `MarketAnalysisDraft`, `finalize_market_analysis`, `execute_market_research_stage`.
-- **Validation:** Bounded web discovery, evidence-ledger verification, deterministic numerical claim citation enforcement.
+- **Validation:** bounded controlled web discovery, evidence-ledger verification, canonical-source reconstruction, deterministic numerical-citation enforcement.
 
 ### 2. Competitor Intelligence Stage
 - **Status:** COMPLETED & VALIDATED (HARDENED)
 - **Implementation:** `CompetitorIntelligenceCrewRunner` (`max_iter=4`), `CompetitorAnalysisDraft`, `finalize_competitor_analysis`, `execute_competitor_intelligence_stage`.
-- **Hardening Rules:**
-  - Strict prohibition of Product-Market Fit (PMF) phrasing in summaries (`PROHIBITED_PMF_PATTERN`).
-  - Strict blocking of unsupported absence phrasing ("lacks", "does not have", "missing") in weaknesses and findings.
-  - Prohibition of "soft absence" inference (e.g. inferring missing local Egyptian payment support for global competitors when unmentioned; recorded as limitation instead).
-  - Search discovery & page retrieval optimized to retrieve 3-4 distinct competitors in parallel, preventing single-competitor detail hogging and restoring runtime performance (~21.93s).
-  - Unknown pricing represented as `pricing=None`.
+- **Key reliability rules:** bounded discovery + detailed-page retrieval, no unsupported PMF/absence claims, `pricing=None` when unavailable, frontend-ready structured competitor profiles, canonical evidence metadata owned by the application.
+- **Latest validated live runtime checkpoint:** approximately `21.93s` after reliability hardening.
 
 ### 3. Customer Intelligence Stage
-- **Status:** FINAL HARDENING IMPLEMENTED; FOCUSED REGRESSION VERIFIED
+- **Status:** COMPLETED & VALIDATED (FINAL HARDENING COMPLETE)
 - **Implementation:** `CustomerIntelligenceCrewRunner` (`max_iter=4`), `CustomerAnalysisDraft`, `finalize_customer_analysis`, `execute_customer_intelligence_stage`.
-- **Hardening Rules:**
-  - Deterministic enforcement in `finalize_customer_analysis`: Non-insufficient customer results with decision-critical `OBSERVED` findings (`PAIN_POINT`, `ALTERNATIVE`, `BUYING_BEHAVIOR`, `DEMAND_SIGNAL`) or ANY `is_numerical=True` finding strictly require at least one controlled detailed page retrieval in `evidence_ledger.page_retrieval_urls`.
-  - Supply-Side vs Customer Demand Rule: Competitor/provider existence is supply-side evidence, not direct customer-demand evidence. Provider presence alone MUST NOT survive as an `OBSERVED DEMAND_SIGNAL`.
-  - Vendor-only deterministic normalization: if `PAIN_POINT`, `ALTERNATIVE`, `BUYING_BEHAVIOR`, or `DEMAND_SIGNAL` relies only on likely vendor-marketing evidence, application code downgrades it to `INFERRED` and caps confidence at `0.6`.
-  - Vendor-only evidence-quality correction: if all cited sources are likely vendor marketing, `STRONG`/`MODERATE` is downgraded to `WEAK`.
-  - Vendor supply → demand summary correction: language implying vendor presence/pricing proves demand or adoption is deterministically bounded to active supply while direct customer demand/adoption remains unverified.
-  - Direct customer evidence (e.g. surveys/interviews/reviews/practitioner discussions) is not downgraded by the vendor-only guard.
-  - Profile vs Web Provenance Rule: Frozen IdeaProfile defines the research subject but is not web evidence; web evidence source IDs must not be attached to facts merely copied from the profile unless independently supported.
-  - Mandatory search attempt check before finalization (`search_queries` check).
-  - Source quality & directness discipline, geography matching, no fake WTP/PMF/personas.
-  - Bounded agent iterations (`max_iter=4`), with the last external live smoke improving runtime from ~311.45s to ~19.40s.
-- **Latest external live validation before deterministic vendor normalization:**
-  - `elapsed_seconds`: 19.40s
-  - `search_count`: 1
-  - `page_retrieval_count`: 1
-  - `finding_count`: 11
-  - `source_count`: 1
-  - `evidence_quality`: MODERATE before the new vendor-only normalizer; the same vendor-only shape now deterministically downgrades to `WEAK` and reclassifies sensitive claims.
-- **Focused post-fix verification:**
-  - Exact GymWyse-style vendor-only regression replay + direct-survey control cases passed in the ChatGPT sandbox (`3 passed`).
-  - The prior failing shape is now deterministically bounded even if the LLM ignores prompt guidance.
-  - Last complete project pytest baseline immediately before this guard: `222 passed, 26 warnings in 59.42s`.
-  - Full project pytest and real Gemini/Firecrawl smoke were not re-executed in the ChatGPT sandbox because CrewAI/project API credentials are not available in that environment; no such run is claimed here.
+- **Hardening rules:**
+  - non-insufficient decision-critical `OBSERVED` customer findings (`PAIN_POINT`, `ALTERNATIVE`, `BUYING_BEHAVIOR`, `DEMAND_SIGNAL`) and ANY numerical finding require controlled detailed-page evidence;
+  - provider/competitor presence is supply-side evidence and must not survive as `OBSERVED DEMAND_SIGNAL`;
+  - likely vendor-marketing-only support deterministically downgrades sensitive customer claims to `INFERRED` with confidence capped at `0.6`;
+  - vendor-only cited evidence downgrades `STRONG`/`MODERATE` evidence quality to `WEAK`;
+  - profile facts are not web evidence unless independently supported;
+  - no fake WTP, PMF, personas, or silent global-to-Egypt generalization.
+- **Final project-environment validation on 2026-08-25:**
+  - full backend suite: **224 passed, 26 warnings in 40.21s**;
+  - real Customer smoke: **PASS**;
+  - elapsed: **30.51s**;
+  - search count: **1**;
+  - page retrieval count: **0**;
+  - findings: **6**;
+  - sources: **0**;
+  - evidence quality: **INSUFFICIENT**;
+  - all decision-sensitive findings remained low-confidence `INFERRED` and the result explicitly preserved primary-research/WTP/PMF gaps.
 
----
+### 4. Research Join + Evidence Gate
+- **Status:** IMPLEMENTED; FOCUSED REGRESSION VERIFIED
+- **Core files:**
+  - `app/research/evidence_gate.py`
+  - `app/services/research_join.py`
+  - `BusinessAnalysisFlow.advance_research()`
+  - gate schemas in `app/schemas/research.py`
+- **Gate outcomes:**
+  - `ACCEPT`: latest Market/Competitor/Customer attempts are complete with `STRONG` or `MODERATE` evidence; downstream may proceed;
+  - `RETRY`: at least one latest stage is `FAILED` or `WEAK` and still has retry budget; downstream pauses and only those stages receive a new attempt;
+  - `INSUFFICIENT`: one or more non-retryable evidence gaps remain, but no retryable work remains; downstream may proceed with gaps explicitly preserved.
+- **Retry policy:** default maximum of **2 total attempts** per research stage (initial attempt + one targeted retry).
+- **Partial-result preservation:** the gate uses the latest attempt for current stage state, while Research Join preserves the latest successful persisted result if a later retry fails.
+- **Idempotency / concurrency safety:** retry scheduling is bounded, checks for an already-created next attempt, locks the parent run during scheduling, and rejects stale evaluations.
+- **No extra AI judge:** Join/Gate routing is deterministic Python application logic; no fourth research Crew or LLM routing call was added.
+- **Commits:**
+  - `64c93e41492d0c3ac2a2336502b4e542f2617d01` — Research Join, Evidence Gate, targeted retry, flow integration, tests;
+  - `553c27f3d1d798d04e93ad96123007b3bde97f0d` — required Research Gate schemas added to `research.py`.
+- **Focused post-schema sandbox regression:** **13 passed** covering Gate policy, Join behavior, previous-success preservation, targeted retry scheduling, and `advance_research()` wiring.
+- **Important validation boundary:** the complete repository suite has not yet been rerun after the Join/Gate commits inside ChatGPT's sandbox because the full repository/runtime cannot be cloned there. The project environment must run the final regression below before Day 5 is marked fully validated.
+
+## Current Backend Test Status
+- Last full project-environment suite before Join/Gate: **224 passed, 26 warnings in 40.21s**.
+- New Join/Gate focused sandbox regression after schema fix: **13 passed**.
+- Final full-suite regression against current `master`: **PENDING USER PROJECT ENVIRONMENT RUN**.
 
 ## Current Known Research Limitations
-- **Willingness to Pay:** Public secondary web research cannot establish direct price sensitivity or willingness-to-pay figures for Egyptian independent gym operators; requires primary interviews and pricing experiments.
-- **Localized Penetration Rates:** Exact software penetration rates among independent Egyptian gyms remain unquantified in desk research.
-- **Operational Workflow Friction:** Direct staff adoption resistance and migration friction from paper/spreadsheets require primary validation via interviews and pilot deployments.
+- **Willingness to Pay:** public secondary web research cannot establish direct price sensitivity or WTP for Egyptian independent gym operators; requires primary interviews/pricing experiments.
+- **Localized Penetration Rates:** exact software penetration among independent Egyptian gyms remains unquantified in desk research.
+- **Operational Workflow Friction:** direct staff adoption resistance and migration friction require primary validation via interviews/pilots.
+- `INSUFFICIENT` is an allowed evidence state and must propagate downstream as an explicit limitation rather than trigger fabrication or uncontrolled retry loops.
 
----
+## Final Day 5 Validation Commands
+From `backend/` after pulling `master`:
+
+```powershell
+uv run pytest tests/unit/research/test_evidence_gate.py tests/unit/services/test_research_join.py tests/unit/flows/test_business_analysis_research_advance.py -v
+uv run pytest
+```
+
+Acceptance:
+- focused Join/Gate/Flow tests: 0 failed / 0 errors;
+- full backend suite: 0 failed / 0 errors.
 
 ## Next Immediate Task
-- **Research Join + Evidence Gate** (Cross-stage aggregation, evidence scoring, targeted retry coordination, and strategy preparation).
-- Do not begin until the project environment has rerun the full pytest suite and Customer live smoke against the current master, because the ChatGPT sandbox cannot access the project's CrewAI/Gemini/Firecrawl runtime credentials.
+- If both final regression commands pass: mark **Day 5 — COMPLETED & VALIDATED**.
+- Then start **Day 6 — Files + RAG + Evidence Retrieval**.
+- Do not begin Strategy/Finance before the planned dependency order.
