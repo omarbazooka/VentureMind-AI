@@ -68,12 +68,10 @@ VENDOR_COMMERCIAL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-SUPPLY_TO_DEMAND_PHRASE_PATTERN = re.compile(
-    r"\b(?:indicat(?:e|es|ed)|suggest(?:s|ed)?|show(?:s|ed)?)\s+"
-    r"(?:active\s+market\s+formation\s+and\s+vendor\s+belief\s+in\s+)?"
-    r"(?:growing\s+)?(?:software\s+)?(?:customer\s+)?"
-    r"(?:demand|adoption)\b",
-    re.IGNORECASE,
+VENDOR_SAFE_SUMMARY = (
+    "Vendor-side evidence shows active market supply and product claims, "
+    "but direct customer behavior, demand, adoption, and willingness "
+    "remain unverified."
 )
 
 VENDOR_SIDE_LIMITATION = (
@@ -172,14 +170,15 @@ def _normalize_vendor_only_summary(
     *,
     summary: str,
     all_cited_sources_are_vendor_marketing: bool,
+    normalized_vendor_claims: bool,
 ) -> str:
-    if not all_cited_sources_are_vendor_marketing:
+    if not (
+        all_cited_sources_are_vendor_marketing
+        and normalized_vendor_claims
+    ):
         return summary
 
-    return SUPPLY_TO_DEMAND_PHRASE_PATTERN.sub(
-        "show active vendor supply; direct customer demand and adoption remain unverified",
-        summary,
-    )
+    return VENDOR_SAFE_SUMMARY
 
 
 def _normalize_vendor_only_evidence_quality(
@@ -373,6 +372,9 @@ def finalize_customer_analysis(
         summary=draft.summary,
         all_cited_sources_are_vendor_marketing=(
             all_cited_sources_are_vendor_marketing
+        ),
+        normalized_vendor_claims=(
+            normalized_vendor_claims
         ),
     )
 
