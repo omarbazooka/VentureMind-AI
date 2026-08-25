@@ -90,6 +90,17 @@ def validate_smoke_result(
     result,
     runner,
 ) -> None:
+    if not (
+        runner
+        .evidence_ledger
+        .search_queries
+    ):
+        raise RuntimeError(
+            "Competitor intelligence "
+            "completed without attempting "
+            "controlled web research"
+        )
+
     claimed_source_ids = {
         source_id
         for finding in result.findings
