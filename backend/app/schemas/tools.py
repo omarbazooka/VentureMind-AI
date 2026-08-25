@@ -3,6 +3,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    model_validator,
 )
 
 
@@ -81,6 +82,12 @@ class PageRetrievalResult(BaseModel):
         extra="forbid"
     )
 
+    source_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+    )
+
     url: AnyHttpUrl
 
     title: str | None = Field(
@@ -91,4 +98,71 @@ class PageRetrievalResult(BaseModel):
     content: str = Field(
         min_length=1,
         max_length=20_000,
+    )
+
+
+class PageRetrievalFailure(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid"
+    )
+
+    url: AnyHttpUrl
+
+    error_type: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+
+
+class BatchPageRetrievalRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid"
+    )
+
+    urls: list[AnyHttpUrl] = Field(
+        min_length=1,
+        max_length=4,
+    )
+
+    max_chars: int = Field(
+        default=6_000,
+        ge=1_000,
+        le=10_000,
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_urls(
+        self,
+    ) -> "BatchPageRetrievalRequest":
+        normalized_urls = [
+            str(url)
+            for url in self.urls
+        ]
+
+        if len(normalized_urls) != len(
+            set(normalized_urls)
+        ):
+            raise ValueError(
+                "Batch page retrieval URLs "
+                "must be unique"
+            )
+
+        return self
+
+
+class BatchPageRetrievalResult(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid"
+    )
+
+    pages: list[PageRetrievalResult] = Field(
+        default_factory=list,
+        max_length=4,
+    )
+
+    failures: list[
+        PageRetrievalFailure
+    ] = Field(
+        default_factory=list,
+        max_length=4,
     )
