@@ -12,8 +12,8 @@ sys.path.insert(
     ),
 )
 
-from app.crews.competitor_intelligence.runtime import (
-    build_competitor_intelligence_runner,
+from app.crews.customer_intelligence.runtime import (
+    build_customer_intelligence_runner,
 )
 from app.schemas.analysis import (
     AnalysisProfileSnapshot,
@@ -36,7 +36,7 @@ def build_smoke_claim(
         analysis_run_id=uuid4(),
         stage=(
             AnalysisStage
-            .COMPETITOR_INTELLIGENCE
+            .CUSTOMER_INTELLIGENCE
         ),
         attempt=1,
         profile_snapshot=(
@@ -83,47 +83,6 @@ def build_smoke_claim(
     )
 
 
-from app.research.competitor_evidence import (
-    UNAVAILABLE_PRICING_PATTERN,
-    UNSUPPORTED_ABSENCE_PATTERN,
-)
-
-
-def _validate_detail(
-    detail,
-) -> None:
-    if (
-        detail.claim_kind
-        == ResearchClaimKind.OBSERVED
-        and not detail.evidence_source_ids
-    ):
-        raise RuntimeError(
-            "Observed competitor detail "
-            "has no evidence source"
-        )
-
-    if (
-        detail.is_numerical
-        and not detail.evidence_source_ids
-    ):
-        raise RuntimeError(
-            "Numerical competitor detail "
-            "has no evidence source"
-        )
-
-    if (
-        detail.claim_kind
-        == ResearchClaimKind.INFERRED
-        and UNSUPPORTED_ABSENCE_PATTERN.search(
-            detail.statement
-        )
-    ):
-        raise RuntimeError(
-            "Inferred competitor detail contains "
-            f"unsupported absence language: {detail.statement}"
-        )
-
-
 def validate_smoke_result(
     *,
     result,
@@ -135,40 +94,14 @@ def validate_smoke_result(
 
     if not search_queries:
         raise RuntimeError(
-            "Competitor intelligence completed "
+            "Customer intelligence completed "
             "without controlled web research"
         )
 
-    if len(search_queries) > 2:
+    if len(search_queries) > 3:
         raise RuntimeError(
-            "Competitor intelligence exceeded "
-            "the two-search latency budget"
-        )
-
-    if (
-        result.evidence_quality
-        != ResearchEvidenceQuality.INSUFFICIENT
-    ):
-        if not result.competitors:
-            raise RuntimeError(
-                "Non-insufficient Competitor "
-                "result has no competitor cards"
-            )
-
-        if not (
-            runner
-            .evidence_ledger
-            .page_retrieval_urls
-        ):
-            raise RuntimeError(
-                "Detailed competitor result was "
-                "created without page retrieval"
-            )
-
-    if len(result.competitors) > 5:
-        raise RuntimeError(
-            "Competitor result exceeded five "
-            "frontend-ready profiles"
+            "Customer intelligence exceeded "
+            "the 3-search hard limit budget"
         )
 
     claimed_source_ids = {
@@ -178,41 +111,6 @@ def validate_smoke_result(
         in finding.evidence_source_ids
     }
 
-    for competitor in result.competitors:
-        claimed_source_ids.add(
-            competitor.primary_source_id
-        )
-
-        details = [
-            *competitor.strengths,
-            *competitor.weaknesses,
-        ]
-
-        if competitor.pricing is not None:
-            if UNAVAILABLE_PRICING_PATTERN.search(
-                competitor.pricing.statement
-            ):
-                raise RuntimeError(
-                    "Competitor pricing contains "
-                    "placeholder statement: "
-                    f"{competitor.pricing.statement}"
-                )
-
-        for optional_detail in (
-            competitor.pricing,
-            competitor.positioning,
-            competitor.target_audience,
-            competitor.geography,
-        ):
-            if optional_detail is not None:
-                details.append(optional_detail)
-
-        for detail in details:
-            _validate_detail(detail)
-            claimed_source_ids.update(
-                detail.evidence_source_ids
-            )
-
     finalized_source_ids = {
         source.source_id
         for source in result.evidence_sources
@@ -220,7 +118,7 @@ def validate_smoke_result(
 
     if claimed_source_ids != finalized_source_ids:
         raise RuntimeError(
-            "Final Competitor evidence IDs "
+            "Final Customer evidence IDs "
             "do not match claimed citations"
         )
 
@@ -230,14 +128,31 @@ def validate_smoke_result(
         and not result.evidence_sources
     ):
         raise RuntimeError(
-            "Non-insufficient Competitor result "
+            "Non-insufficient Customer result "
             "has no verified evidence sources"
         )
+
+    for finding in result.findings:
+        if (
+            finding.claim_kind == ResearchClaimKind.OBSERVED
+            and not finding.evidence_source_ids
+        ):
+            raise RuntimeError(
+                f"Observed Customer finding has no evidence source ID: {finding.statement}"
+            )
+
+        if (
+            finding.is_numerical
+            and not finding.evidence_source_ids
+        ):
+            raise RuntimeError(
+                f"Numerical Customer finding has no evidence source ID: {finding.statement}"
+            )
 
     for source in result.evidence_sources:
         if source.retrieved_at is None:
             raise RuntimeError(
-                "Verified competitor evidence "
+                "Verified customer evidence "
                 "is missing retrieval timestamp"
             )
 
@@ -256,14 +171,14 @@ def validate_smoke_result(
             != ledger_source.excerpt
         ):
             raise RuntimeError(
-                "Final Competitor source metadata "
+                "Final Customer source metadata "
                 "does not match Evidence Ledger"
             )
 
 
 def main() -> None:
     runner = (
-        build_competitor_intelligence_runner()
+        build_customer_intelligence_runner()
     )
 
     claim = build_smoke_claim()
@@ -288,7 +203,7 @@ def main() -> None:
         )
     )
 
-    print("\nRESEARCH PERFORMANCE:")
+    print("\nCUSTOMER RESEARCH PERFORMANCE:")
     print(
         f"- elapsed_seconds: "
         f"{elapsed_seconds:.2f}"
@@ -300,6 +215,18 @@ def main() -> None:
     print(
         "- page_retrieval_count: "
         f"{len(runner.evidence_ledger.page_retrieval_urls)}"
+    )
+    print(
+        "- evidence_quality: "
+        f"{result.evidence_quality.value}"
+    )
+    print(
+        "- finding_count: "
+        f"{len(result.findings)}"
+    )
+    print(
+        "- source_count: "
+        f"{len(result.evidence_sources)}"
     )
 
     print("\nVERIFIED SEARCH QUERIES:")
@@ -320,41 +247,25 @@ def main() -> None:
             f"- {source.source_id}: {source.url}"
         )
 
-    print("\nCOMPETITOR CARDS:")
-    for competitor in result.competitors:
-        print(
-            f"\n- {competitor.name} "
-            f"[{competitor.relationship.value}]"
-        )
-        print(
-            "  relevance: "
-            f"{competitor.relevance_summary}"
-        )
+    print("\nCUSTOMER FINDINGS BY CATEGORY:")
+    category_map = {}
+    for finding in result.findings:
+        cat = finding.category.value
+        category_map.setdefault(cat, []).append(finding)
 
-        if competitor.strengths:
-            print("  strengths:")
-            for strength in competitor.strengths:
-                print(
-                    "    - "
-                    f"[{strength.claim_kind.value}] "
-                    f"{strength.statement}"
-                )
-
-        if competitor.weaknesses:
-            print("  weaknesses:")
-            for weakness in competitor.weaknesses:
-                print(
-                    "    - "
-                    f"[{weakness.claim_kind.value}] "
-                    f"{weakness.statement}"
-                )
-
-        if competitor.pricing is not None:
+    for cat, findings in category_map.items():
+        print(f"\n[{cat}] ({len(findings)} findings):")
+        for f in findings:
+            sources_str = ", ".join(f.evidence_source_ids) if f.evidence_source_ids else "None"
+            num_str = " (NUMERICAL)" if f.is_numerical else ""
             print(
-                "  pricing: "
-                f"[{competitor.pricing.claim_kind.value}] "
-                f"{competitor.pricing.statement}"
+                f"  - [{f.claim_kind.value}]{num_str} "
+                f"[{sources_str}] (conf: {f.confidence}) {f.statement}"
             )
+
+    print("\nLIMITATIONS:")
+    for lim in result.limitations:
+        print(f"- {lim}")
 
 
 if __name__ == "__main__":

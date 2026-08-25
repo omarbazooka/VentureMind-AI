@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     competitor_intelligence_model: str = (
         "gemini-3.5-flash-lite"
     )
+    customer_intelligence_model: str = (
+        "gemini-3.5-flash-lite"
+    )
     
     model_config = SettingsConfigDict(
         env_file = ".env",

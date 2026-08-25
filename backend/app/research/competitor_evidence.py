@@ -5,6 +5,8 @@ from pydantic import (
     model_validator,
 )
 
+import re
+
 from app.research.evidence import (
     ResearchEvidenceLedger,
     ResearchEvidenceLedgerError,
@@ -18,7 +20,29 @@ from app.schemas.research import (
     CompetitorDetail,
     CompetitorFinding,
     CompetitorProfile,
+    ResearchClaimKind,
     ResearchEvidenceQuality,
+)
+
+
+UNSUPPORTED_ABSENCE_PATTERN = re.compile(
+    r"\b("
+    r"lacks?|lacking|"
+    r"does\s+not\s+(have|offer|support|include|provide|feature)|"
+    r"doesn['’]t\s+(have|offer|support|include|provide|feature)|"
+    r"missing"
+    r")\b",
+    re.IGNORECASE,
+)
+
+UNAVAILABLE_PRICING_PATTERN = re.compile(
+    r"\b("
+    r"pricing\s+(is\s+|was\s+)?(not\s+|un)(published|available|disclosed|publicly|known)|"
+    r"pricing\s+is\s+not\s+publicly\s+available|"
+    r"no\s+(public|published)\s+pricing|"
+    r"pricing\s+info(rmation)?\s+(is\s+)?not\s+available"
+    r")\b",
+    re.IGNORECASE,
 )
 
 
@@ -206,6 +230,47 @@ def _collect_claimed_source_ids(
     return claimed_source_ids
 
 
+def _verify_semantic_rules(
+    *,
+    findings: list[CompetitorFinding],
+    competitors: list[CompetitorProfile],
+) -> None:
+    for competitor in competitors:
+        if competitor.pricing is not None:
+            if UNAVAILABLE_PRICING_PATTERN.search(
+                competitor.pricing.statement
+            ):
+                raise CompetitorEvidenceVerificationError(
+                    "Unknown or unpublished pricing must be "
+                    "represented as pricing=None instead of "
+                    "a placeholder pricing detail"
+                )
+
+        for weakness in competitor.weaknesses:
+            if (
+                weakness.claim_kind == ResearchClaimKind.INFERRED
+                and UNSUPPORTED_ABSENCE_PATTERN.search(
+                    weakness.statement
+                )
+            ):
+                raise CompetitorEvidenceVerificationError(
+                    "Inferred competitor weaknesses must not make "
+                    "unsupported absence assertions (e.g. lacks, "
+                    "does not have, missing)"
+                )
+
+    for finding in findings:
+        if (
+            finding.claim_kind == ResearchClaimKind.INFERRED
+            and UNSUPPORTED_ABSENCE_PATTERN.search(finding.statement)
+        ):
+            raise CompetitorEvidenceVerificationError(
+                "Inferred competitor findings must not make "
+                "unsupported absence assertions (e.g. lacks, "
+                "does not have, missing)"
+            )
+
+
 def finalize_competitor_analysis(
     *,
     draft: CompetitorAnalysisDraft,
@@ -242,6 +307,11 @@ def finalize_competitor_analysis(
             "detailed page through controlled "
             "page retrieval"
         )
+
+    _verify_semantic_rules(
+        findings=draft.findings,
+        competitors=draft.competitors,
+    )
 
     claimed_source_ids = (
         _collect_claimed_source_ids(

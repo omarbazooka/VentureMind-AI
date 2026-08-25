@@ -312,3 +312,131 @@ def test_finalizer_rejects_wrong_stage_ledger():
             draft=draft,
             evidence_ledger=ledger,
         )
+
+
+def test_finalizer_rejects_inferred_missing_feature_weakness():
+    ledger = make_ledger_with_detail_source()
+
+    profile = make_profile()
+    profile.weaknesses = [
+        CompetitorDetail(
+            statement="Lacks native Arabic receipt printing.",
+            claim_kind=ResearchClaimKind.INFERRED,
+            confidence=0.4,
+            evidence_source_ids=["web_real"],
+        )
+    ]
+
+    draft = CompetitorAnalysisDraft(
+        summary="A competitor was identified.",
+        competitors=[profile],
+        findings=[],
+        evidence_quality=ResearchEvidenceQuality.MODERATE,
+        limitations=[],
+    )
+
+    with pytest.raises(
+        CompetitorEvidenceVerificationError,
+        match="unsupported absence assertions",
+    ):
+        finalize_competitor_analysis(
+            draft=draft,
+            evidence_ledger=ledger,
+        )
+
+
+def test_finalizer_accepts_valid_inferred_tradeoff_weakness():
+    ledger = make_ledger_with_detail_source()
+
+    profile = make_profile()
+    profile.weaknesses = [
+        CompetitorDetail(
+            statement=(
+                "The published positioning suggests a broader product scope "
+                "that may increase setup complexity for very small gyms."
+            ),
+            claim_kind=ResearchClaimKind.INFERRED,
+            confidence=0.45,
+            evidence_source_ids=["web_real"],
+        )
+    ]
+
+    draft = CompetitorAnalysisDraft(
+        summary="A competitor was identified.",
+        competitors=[profile],
+        findings=[],
+        evidence_quality=ResearchEvidenceQuality.MODERATE,
+        limitations=[],
+    )
+
+    result = finalize_competitor_analysis(
+        draft=draft,
+        evidence_ledger=ledger,
+    )
+
+    assert len(result.competitors) == 1
+    assert (
+        result.competitors[0].weaknesses[0].statement
+        == "The published positioning suggests a broader product scope that may increase setup complexity for very small gyms."
+    )
+
+
+def test_finalizer_rejects_unknown_pricing_placeholder():
+    ledger = make_ledger_with_detail_source()
+
+    profile = make_profile()
+    profile.pricing = CompetitorDetail(
+        statement="Pricing is not published.",
+        claim_kind=ResearchClaimKind.OBSERVED,
+        confidence=0.9,
+        evidence_source_ids=["web_real"],
+    )
+
+    draft = CompetitorAnalysisDraft(
+        summary="A competitor was identified.",
+        competitors=[profile],
+        findings=[],
+        evidence_quality=ResearchEvidenceQuality.MODERATE,
+        limitations=[],
+    )
+
+    with pytest.raises(
+        CompetitorEvidenceVerificationError,
+        match="Unknown or unpublished pricing must be represented as pricing=None",
+    ):
+        finalize_competitor_analysis(
+            draft=draft,
+            evidence_ledger=ledger,
+        )
+
+
+def test_finalizer_accepts_verified_real_pricing():
+    ledger = make_ledger_with_detail_source()
+
+    profile = make_profile()
+    profile.pricing = CompetitorDetail(
+        statement="Starter pricing is $99/month.",
+        claim_kind=ResearchClaimKind.OBSERVED,
+        confidence=0.95,
+        evidence_source_ids=["web_real"],
+        is_numerical=True,
+    )
+
+    draft = CompetitorAnalysisDraft(
+        summary="A competitor was identified.",
+        competitors=[profile],
+        findings=[],
+        evidence_quality=ResearchEvidenceQuality.MODERATE,
+        limitations=[],
+    )
+
+    result = finalize_competitor_analysis(
+        draft=draft,
+        evidence_ledger=ledger,
+    )
+
+    assert result.competitors[0].pricing is not None
+    assert (
+        result.competitors[0].pricing.statement
+        == "Starter pricing is $99/month."
+    )
