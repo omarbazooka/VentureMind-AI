@@ -1,5 +1,6 @@
 from app.research.customer_evidence import (
     CustomerAnalysisDraft,
+    VENDOR_SAFE_SUMMARY,
     VENDOR_SIDE_LIMITATION,
     finalize_customer_analysis,
 )
@@ -157,11 +158,7 @@ def test_vendor_only_customer_claims_are_downgraded():
     )
 
     assert result.evidence_quality == ResearchEvidenceQuality.WEAK
-    assert "indicate growing software adoption" not in result.summary
-    assert (
-        "direct customer demand and adoption remain unverified"
-        in result.summary
-    )
+    assert result.summary == VENDOR_SAFE_SUMMARY
     assert VENDOR_SIDE_LIMITATION in result.limitations
 
 
