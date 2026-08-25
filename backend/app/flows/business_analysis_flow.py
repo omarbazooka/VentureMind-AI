@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -7,6 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.models.analysis_run import AnalysisRun
 from app.models.analysis_stage_run import AnalysisStageRun
+from app.research.evidence_gate import (
+    DEFAULT_MAX_RESEARCH_ATTEMPTS,
+)
 from app.schemas.analysis import (
     AnalysisProfileSnapshot,
     AnalysisRunStatus,
@@ -16,6 +20,12 @@ from app.schemas.analysis import (
 from app.schemas.intake import ProfileReadinessStatus
 from app.services.intake_profile import (
     evaluate_profile_readiness,
+)
+from app.services.research_join import (
+    ResearchJoinEvaluation,
+    ScheduledResearchRetry,
+    inspect_research_join,
+    schedule_targeted_retries,
 )
 
 
@@ -46,6 +56,12 @@ class BusinessAnalysisSnapshotError(
     BusinessAnalysisFlowError
 ):
     pass
+
+
+@dataclass(frozen=True)
+class BusinessAnalysisResearchStep:
+    evaluation: ResearchJoinEvaluation
+    scheduled_retries: list[ScheduledResearchRetry]
 
 
 class BusinessAnalysisFlow:
@@ -222,3 +238,34 @@ class BusinessAnalysisFlow:
         db.flush()
 
         return analysis_run
+
+    def advance_research(
+        self,
+        *,
+        db: Session,
+        run_id: UUID,
+        max_attempts: int = DEFAULT_MAX_RESEARCH_ATTEMPTS,
+    ) -> BusinessAnalysisResearchStep:
+        evaluation = inspect_research_join(
+            db=db,
+            analysis_run_id=run_id,
+            max_attempts=max_attempts,
+        )
+
+        scheduled_retries: list[
+            ScheduledResearchRetry
+        ] = []
+
+        if evaluation.gate.retry_stages:
+            scheduled_retries = (
+                schedule_targeted_retries(
+                    db=db,
+                    evaluation=evaluation,
+                    max_attempts=max_attempts,
+                )
+            )
+
+        return BusinessAnalysisResearchStep(
+            evaluation=evaluation,
+            scheduled_retries=scheduled_retries,
+        )
