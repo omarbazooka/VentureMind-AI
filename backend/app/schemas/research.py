@@ -279,6 +279,7 @@ def _validate_result_evidence(
     ],
     evidence_quality: ResearchEvidenceQuality,
     limitations: list[str],
+    allow_empty_findings: bool = False,
 ) -> None:
     source_ids = [
         source.source_id
@@ -311,6 +312,7 @@ def _validate_result_evidence(
 
     if (
         not findings
+        and not allow_empty_findings
         and evidence_quality
         != ResearchEvidenceQuality.INSUFFICIENT
     ):
@@ -457,6 +459,7 @@ class CompetitorAnalysis(BaseModel):
                 self.evidence_quality
             ),
             limitations=self.limitations,
+            allow_empty_findings=True,
         )
 
         if (
