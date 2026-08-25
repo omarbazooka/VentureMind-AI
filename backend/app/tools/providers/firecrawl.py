@@ -1,5 +1,3 @@
-from hashlib import sha256
-
 import httpx
 from pydantic import (
     SecretStr,
@@ -8,9 +6,14 @@ from pydantic import (
 
 from app.core.config import settings
 from app.schemas.tools import (
+    PageRetrievalRequest,
+    PageRetrievalResult,
     WebSearchItem,
     WebSearchRequest,
     WebSearchResult,
+)
+from app.tools.source_ids import (
+    build_web_source_id,
 )
 
 
@@ -26,14 +29,31 @@ class FirecrawlConfigurationError(
     pass
 
 
-def _build_web_source_id(
-    url: str,
+def _resolve_api_key(
+    api_key: str | SecretStr | None,
 ) -> str:
-    digest = sha256(
-        url.encode("utf-8")
-    ).hexdigest()
+    resolved_api_key = (
+        api_key
+        if api_key is not None
+        else settings.firecrawl_api_key
+    )
 
-    return f"web_{digest[:16]}"
+    if resolved_api_key is None:
+        raise FirecrawlConfigurationError(
+            "FIRECRAWL_API_KEY "
+            "is not configured"
+        )
+
+    if isinstance(
+        resolved_api_key,
+        SecretStr,
+    ):
+        return (
+            resolved_api_key
+            .get_secret_value()
+        )
+
+    return resolved_api_key
 
 
 class FirecrawlWebSearchProvider:
@@ -51,34 +71,15 @@ class FirecrawlWebSearchProvider:
         ) = None,
         client: httpx.Client | None = None,
     ) -> None:
-        resolved_api_key = (
+        self._api_key = _resolve_api_key(
             api_key
-            if api_key is not None
-            else settings.firecrawl_api_key
         )
-
-        if resolved_api_key is None:
-            raise FirecrawlConfigurationError(
-                "FIRECRAWL_API_KEY "
-                "is not configured"
-            )
-
-        if isinstance(
-            resolved_api_key,
-            SecretStr,
-        ):
-            resolved_api_key = (
-                resolved_api_key
-                .get_secret_value()
-            )
-
-        self._api_key = resolved_api_key
 
         self._client = (
             client
             if client is not None
             else httpx.Client(
-                timeout=15.0,
+                timeout=12.0,
             )
         )
 
@@ -108,7 +109,7 @@ class FirecrawlWebSearchProvider:
                     "safe": True,
                     "highlights": False,
                     "ignoreInvalidURLs": True,
-                    "timeout": 10_000,
+                    "timeout": 8_000,
                 },
             )
 
@@ -174,7 +175,7 @@ class FirecrawlWebSearchProvider:
             try:
                 item = WebSearchItem(
                     source_id=(
-                        _build_web_source_id(
+                        build_web_source_id(
                             url
                         )
                     ),
@@ -195,4 +196,144 @@ class FirecrawlWebSearchProvider:
         return WebSearchResult(
             query=request.query,
             items=items,
+        )
+
+
+class FirecrawlPageRetrievalProvider:
+    SCRAPE_URL = (
+        "https://api.firecrawl.dev/v2/scrape"
+    )
+
+    def __init__(
+        self,
+        *,
+        api_key: (
+            str
+            | SecretStr
+            | None
+        ) = None,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self._api_key = _resolve_api_key(
+            api_key
+        )
+
+        self._client = (
+            client
+            if client is not None
+            else httpx.Client(
+                timeout=12.0,
+            )
+        )
+
+    def retrieve(
+        self,
+        request: PageRetrievalRequest,
+    ) -> PageRetrievalResult:
+        url = str(request.url)
+
+        try:
+            response = self._client.post(
+                self.SCRAPE_URL,
+                headers={
+                    "Authorization": (
+                        f"Bearer {self._api_key}"
+                    ),
+                    "Content-Type": (
+                        "application/json"
+                    ),
+                },
+                json={
+                    "url": url,
+                    "formats": [
+                        "markdown"
+                    ],
+                    "onlyMainContent": True,
+                    "removeBase64Images": True,
+                    "blockAds": True,
+                    "storeInCache": True,
+                    "maxAge": 86_400_000,
+                    "timeout": 8_000,
+                },
+            )
+
+            response.raise_for_status()
+
+            payload = response.json()
+
+        except (
+            httpx.HTTPError,
+            ValueError,
+        ) as exc:
+            raise FirecrawlProviderError(
+                "Firecrawl page retrieval failed"
+            ) from exc
+
+        if payload.get("success") is not True:
+            raise FirecrawlProviderError(
+                "Firecrawl returned an "
+                "unsuccessful scrape response"
+            )
+
+        data = payload.get(
+            "data",
+            {},
+        )
+
+        if not isinstance(
+            data,
+            dict,
+        ):
+            raise FirecrawlProviderError(
+                "Firecrawl returned invalid "
+                "page retrieval data"
+            )
+
+        markdown = data.get(
+            "markdown"
+        )
+
+        if not isinstance(
+            markdown,
+            str,
+        ) or not markdown.strip():
+            raise FirecrawlProviderError(
+                "Firecrawl page retrieval "
+                "returned no markdown content"
+            )
+
+        metadata = data.get(
+            "metadata",
+            {},
+        )
+
+        title = None
+
+        if isinstance(
+            metadata,
+            dict,
+        ):
+            raw_title = metadata.get(
+                "title"
+            )
+
+            if isinstance(
+                raw_title,
+                str,
+            ) and raw_title.strip():
+                title = raw_title.strip()
+
+        return PageRetrievalResult(
+            source_id=(
+                build_web_source_id(
+                    url
+                )
+            ),
+            url=request.url,
+            title=title,
+            content=(
+                markdown[
+                    :request.max_chars
+                ]
+            ),
         )
