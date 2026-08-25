@@ -17,210 +17,170 @@ from app.schemas.analysis import (
     AnalysisStage,
 )
 from app.schemas.research import (
+    CompetitorDetail,
     CompetitorFinding,
     CompetitorFindingCategory,
+    CompetitorProfile,
+    CompetitorRelationship,
     ResearchClaimKind,
     ResearchEvidenceQuality,
 )
 from app.schemas.tools import (
+    PageRetrievalResult,
     WebSearchItem,
     WebSearchResult,
 )
 
 
-def make_ledger_with_source(
+RETRIEVED_AT = datetime(
+    2026,
+    8,
+    25,
+    12,
+    0,
+    tzinfo=timezone.utc,
+)
+
+
+def make_ledger_with_detail_source(
 ) -> ResearchEvidenceLedger:
     ledger = ResearchEvidenceLedger(
-        stage=(
-            AnalysisStage
-            .COMPETITOR_INTELLIGENCE
-        )
+        stage=AnalysisStage.COMPETITOR_INTELLIGENCE
     )
 
     ledger.record_web_search_result(
         WebSearchResult(
-            query=(
-                "gym management software "
-                "competitors Egypt"
-            ),
+            query="gym management software Egypt",
             items=[
                 WebSearchItem(
                     source_id="web_real",
-                    title=(
-                        "Real Competitor "
-                        "Product Page"
-                    ),
-                    url=(
-                        "https://"
-                        "competitor.example/"
-                        "pricing"
-                    ),
-                    snippet=(
-                        "The provider returned "
-                        "competitor pricing "
-                        "evidence."
-                    ),
+                    title="Competitor Search Result",
+                    url="https://competitor.example/pricing",
+                    snippet="Official competitor result.",
                 )
             ],
         ),
-        retrieved_at=datetime(
-            2026,
-            8,
-            25,
-            10,
-            0,
-            tzinfo=timezone.utc,
-        ),
+        retrieved_at=RETRIEVED_AT,
     )
 
-    return ledger
-
-
-def make_ledger_after_empty_search(
-) -> ResearchEvidenceLedger:
-    ledger = ResearchEvidenceLedger(
-        stage=(
-            AnalysisStage
-            .COMPETITOR_INTELLIGENCE
-        )
-    )
-
-    ledger.record_web_search_result(
-        WebSearchResult(
-            query=(
-                "independent gym management "
-                "software competitors Egypt"
+    ledger.record_page_retrieval_result(
+        PageRetrievalResult(
+            source_id="web_real",
+            url="https://competitor.example/pricing",
+            title="Competitor Pricing",
+            content=(
+                "Gym management software with "
+                "memberships and scheduling. "
+                "Starter pricing is $99/month."
             ),
-            items=[],
         ),
-        retrieved_at=datetime(
-            2026,
-            8,
-            25,
-            10,
-            0,
-            tzinfo=timezone.utc,
-        ),
+        retrieved_at=RETRIEVED_AT,
     )
 
     return ledger
 
 
-def test_finalizer_builds_canonical_sources_from_ledger():
-    ledger = make_ledger_with_source()
-
-    draft = CompetitorAnalysisDraft(
-        summary=(
-            "A relevant competitor "
-            "was identified."
+def make_profile(
+    *,
+    source_id: str = "web_real",
+) -> CompetitorProfile:
+    return CompetitorProfile(
+        name="Competitor One",
+        relationship=CompetitorRelationship.DIRECT,
+        relevance_summary=(
+            "Serves gyms with overlapping "
+            "membership and scheduling workflows."
         ),
-        findings=[
-            CompetitorFinding(
-                category=(
-                    CompetitorFindingCategory
-                    .PRICING
-                ),
+        confidence=0.9,
+        primary_source_id=source_id,
+        strengths=[
+            CompetitorDetail(
                 statement=(
-                    "The competitor publishes "
-                    "pricing on its website."
+                    "Combines membership management "
+                    "and scheduling in one product."
                 ),
-                claim_kind=(
-                    ResearchClaimKind
-                    .OBSERVED
-                ),
+                claim_kind=ResearchClaimKind.OBSERVED,
                 confidence=0.9,
-                evidence_source_ids=[
-                    "web_real"
-                ],
+                evidence_source_ids=[source_id],
             )
         ],
-        evidence_quality=(
-            ResearchEvidenceQuality.MODERATE
-        ),
-        limitations=[
-            "Only one competitor source "
-            "was used."
+        weaknesses=[
+            CompetitorDetail(
+                statement=(
+                    "The published positioning suggests "
+                    "a broader product scope that may "
+                    "increase setup complexity for very "
+                    "small gyms."
+                ),
+                claim_kind=ResearchClaimKind.INFERRED,
+                confidence=0.45,
+                evidence_source_ids=[source_id],
+            )
         ],
+        pricing=CompetitorDetail(
+            statement="Starter pricing is $99/month.",
+            claim_kind=ResearchClaimKind.OBSERVED,
+            confidence=0.95,
+            evidence_source_ids=[source_id],
+            is_numerical=True,
+        ),
     )
 
-    result = (
-        finalize_competitor_analysis(
-            draft=draft,
-            evidence_ledger=ledger,
-        )
-    )
 
-    assert (
-        len(result.evidence_sources)
-        == 1
-    )
-
-    source = result.evidence_sources[0]
-
-    assert (
-        source.source_id
-        == "web_real"
-    )
-
-    assert (
-        source.title
-        == "Real Competitor Product Page"
-    )
-
-    assert (
-        str(source.url)
-        == (
-            "https://"
-            "competitor.example/pricing"
-        )
-    )
-
-    assert (
-        source.excerpt
-        == (
-            "The provider returned "
-            "competitor pricing evidence."
-        )
-    )
-
-    assert source.retrieved_at is not None
-
-
-def test_finalizer_rejects_hallucinated_source_id():
-    ledger = make_ledger_after_empty_search()
+def test_finalizer_builds_frontend_ready_competitor_profiles():
+    ledger = make_ledger_with_detail_source()
 
     draft = CompetitorAnalysisDraft(
-        summary=(
-            "A competitor was allegedly "
-            "identified."
-        ),
+        summary="A direct competitor was verified.",
+        competitors=[make_profile()],
         findings=[
             CompetitorFinding(
-                category=(
-                    CompetitorFindingCategory
-                    .COMPETITOR
-                ),
-                statement=(
-                    "A competitor exists."
-                ),
-                claim_kind=(
-                    ResearchClaimKind
-                    .OBSERVED
-                ),
-                confidence=0.8,
-                evidence_source_ids=[
-                    "web_hallucinated"
-                ],
+                category=CompetitorFindingCategory.COMPETITOR,
+                statement="A direct competitor exists.",
+                claim_kind=ResearchClaimKind.OBSERVED,
+                confidence=0.9,
+                evidence_source_ids=["web_real"],
             )
         ],
-        evidence_quality=(
-            ResearchEvidenceQuality.MODERATE
-        ),
+        evidence_quality=ResearchEvidenceQuality.STRONG,
+        limitations=[],
+    )
+
+    result = finalize_competitor_analysis(
+        draft=draft,
+        evidence_ledger=ledger,
+    )
+
+    assert len(result.competitors) == 1
+    assert result.competitors[0].name == "Competitor One"
+    assert (
+        result.competitors[0].pricing.statement
+        == "Starter pricing is $99/month."
+    )
+    assert len(result.evidence_sources) == 1
+    assert result.evidence_sources[0].source_id == "web_real"
+    assert result.evidence_sources[0].title == "Competitor Pricing"
+    assert "$99/month" in result.evidence_sources[0].excerpt
+
+
+def test_finalizer_rejects_hallucinated_profile_source_id():
+    ledger = make_ledger_with_detail_source()
+
+    draft = CompetitorAnalysisDraft(
+        summary="A claimed competitor exists.",
+        competitors=[
+            make_profile(
+                source_id="web_hallucinated"
+            )
+        ],
+        findings=[],
+        evidence_quality=ResearchEvidenceQuality.MODERATE,
         limitations=[],
     )
 
     with pytest.raises(
-        CompetitorEvidenceVerificationError
+        CompetitorEvidenceVerificationError,
+        match="not returned by a controlled",
     ):
         finalize_competitor_analysis(
             draft=draft,
@@ -228,41 +188,37 @@ def test_finalizer_rejects_hallucinated_source_id():
         )
 
 
-def test_finalizer_rejects_non_insufficient_without_sources():
-    ledger = make_ledger_after_empty_search()
+def test_finalizer_rejects_non_insufficient_without_page_retrieval():
+    ledger = ResearchEvidenceLedger(
+        stage=AnalysisStage.COMPETITOR_INTELLIGENCE
+    )
+
+    ledger.record_web_search_result(
+        WebSearchResult(
+            query="gym software Egypt",
+            items=[
+                WebSearchItem(
+                    source_id="web_real",
+                    title="Search source",
+                    url="https://competitor.example",
+                    snippet="Competitor evidence.",
+                )
+            ],
+        ),
+        retrieved_at=RETRIEVED_AT,
+    )
 
     draft = CompetitorAnalysisDraft(
-        summary=(
-            "An inferred competitor view."
-        ),
-        findings=[
-            CompetitorFinding(
-                category=(
-                    CompetitorFindingCategory
-                    .WHITESPACE
-                ),
-                statement=(
-                    "Local operators may "
-                    "prefer simpler software."
-                ),
-                claim_kind=(
-                    ResearchClaimKind
-                    .INFERRED
-                ),
-                confidence=0.4,
-            )
-        ],
-        evidence_quality=(
-            ResearchEvidenceQuality.WEAK
-        ),
-        limitations=[
-            "The whitespace conclusion "
-            "is inferred."
-        ],
+        summary="A competitor was identified.",
+        competitors=[make_profile()],
+        findings=[],
+        evidence_quality=ResearchEvidenceQuality.MODERATE,
+        limitations=[],
     )
 
     with pytest.raises(
-        CompetitorEvidenceVerificationError
+        CompetitorEvidenceVerificationError,
+        match="page retrieval",
     ):
         finalize_competitor_analysis(
             draft=draft,
@@ -270,42 +226,22 @@ def test_finalizer_rejects_non_insufficient_without_sources():
         )
 
 
-def test_finalizer_rejects_numerical_pricing_without_source():
-    ledger = make_ledger_after_empty_search()
+def test_finalizer_rejects_when_no_controlled_search_was_attempted():
+    ledger = ResearchEvidenceLedger(
+        stage=AnalysisStage.COMPETITOR_INTELLIGENCE
+    )
 
     draft = CompetitorAnalysisDraft(
-        summary=(
-            "Unsupported competitor pricing."
-        ),
-        findings=[
-            CompetitorFinding(
-                category=(
-                    CompetitorFindingCategory
-                    .PRICING
-                ),
-                statement=(
-                    "A competitor may charge "
-                    "$50 per month."
-                ),
-                claim_kind=(
-                    ResearchClaimKind.INFERRED
-                ),
-                confidence=0.4,
-                is_numerical=True,
-            )
-        ],
-        evidence_quality=(
-            ResearchEvidenceQuality
-            .INSUFFICIENT
-        ),
-        limitations=[
-            "No pricing source "
-            "was available."
-        ],
+        summary="No competitor evidence was available.",
+        competitors=[],
+        findings=[],
+        evidence_quality=ResearchEvidenceQuality.INSUFFICIENT,
+        limitations=["No evidence was available."],
     )
 
     with pytest.raises(
-        CompetitorEvidenceVerificationError
+        CompetitorEvidenceVerificationError,
+        match="must attempt controlled research",
     ):
         finalize_competitor_analysis(
             draft=draft,
@@ -314,112 +250,72 @@ def test_finalizer_rejects_numerical_pricing_without_source():
 
 
 def test_finalizer_accepts_insufficient_after_empty_search():
-    ledger = make_ledger_after_empty_search()
+    ledger = ResearchEvidenceLedger(
+        stage=AnalysisStage.COMPETITOR_INTELLIGENCE
+    )
+
+    ledger.record_web_search_result(
+        WebSearchResult(
+            query="niche competitor search",
+            items=[],
+        ),
+        retrieved_at=RETRIEVED_AT,
+    )
 
     draft = CompetitorAnalysisDraft(
-        summary=(
-            "Reliable competitor evidence "
-            "was unavailable."
-        ),
+        summary="Reliable competitor evidence was unavailable.",
+        competitors=[],
         findings=[],
-        evidence_quality=(
-            ResearchEvidenceQuality
-            .INSUFFICIENT
-        ),
+        evidence_quality=ResearchEvidenceQuality.INSUFFICIENT,
         limitations=[
-            "The controlled search did not "
-            "return reliable competitor "
-            "evidence."
+            "The controlled search returned no "
+            "reliable competitor evidence."
         ],
     )
 
-    result = (
-        finalize_competitor_analysis(
-            draft=draft,
-            evidence_ledger=ledger,
-        )
+    result = finalize_competitor_analysis(
+        draft=draft,
+        evidence_ledger=ledger,
     )
 
+    assert result.competitors == []
     assert result.findings == []
-
-    assert (
-        result.evidence_sources
-        == []
-    )
-
+    assert result.evidence_sources == []
     assert (
         result.evidence_quality
-        == (
-            ResearchEvidenceQuality
-            .INSUFFICIENT
-        )
+        == ResearchEvidenceQuality.INSUFFICIENT
     )
 
-    assert len(
-        ledger.search_queries
-    ) == 1
 
-
-def test_finalizer_rejects_when_no_controlled_search_was_attempted():
-    ledger = ResearchEvidenceLedger(
-        stage=(
-            AnalysisStage
-            .COMPETITOR_INTELLIGENCE
-        )
-    )
-
-    draft = CompetitorAnalysisDraft(
-        summary=(
-            "No competitor evidence "
-            "was available."
-        ),
-        findings=[],
-        evidence_quality=(
-            ResearchEvidenceQuality
-            .INSUFFICIENT
-        ),
-        limitations=[
-            "No evidence was available."
-        ],
-    )
-
+def test_competitor_detail_rejects_numerical_pricing_without_source():
     with pytest.raises(
-        CompetitorEvidenceVerificationError,
-        match=(
-            "must attempt controlled "
-            "research"
-        ),
+        ValueError,
+        match="Numerical competitor details",
     ):
-        finalize_competitor_analysis(
-            draft=draft,
-            evidence_ledger=ledger,
+        CompetitorDetail(
+            statement="Pricing may be $50/month.",
+            claim_kind=ResearchClaimKind.INFERRED,
+            confidence=0.4,
+            is_numerical=True,
         )
 
 
 def test_finalizer_rejects_wrong_stage_ledger():
     ledger = ResearchEvidenceLedger(
-        stage=(
-            AnalysisStage.MARKET_RESEARCH
-        )
+        stage=AnalysisStage.MARKET_RESEARCH
     )
 
     draft = CompetitorAnalysisDraft(
-        summary=(
-            "Reliable competitor evidence "
-            "was unavailable."
-        ),
+        summary="Reliable competitor evidence was unavailable.",
+        competitors=[],
         findings=[],
-        evidence_quality=(
-            ResearchEvidenceQuality
-            .INSUFFICIENT
-        ),
-        limitations=[
-            "No competitor evidence."
-        ],
+        evidence_quality=ResearchEvidenceQuality.INSUFFICIENT,
+        limitations=["No competitor evidence."],
     )
 
     with pytest.raises(
-        CompetitorEvidenceVerificationError
+        CompetitorEvidenceVerificationError,
+        match="COMPETITOR_INTELLIGENCE",
     ):
         finalize_competitor_analysis(
             draft=draft,
