@@ -29,6 +29,44 @@ from app.schemas.research import (
 )
 
 
+_INFERRED_ABSENCE_PHRASES = (
+    " lacks ",
+    " lack ",
+    " does not have ",
+    " doesn't have ",
+    " does not offer ",
+    " doesn't offer ",
+    " does not support ",
+    " doesn't support ",
+    " does not include ",
+    " doesn't include ",
+    " missing ",
+)
+
+_UNKNOWN_PRICING_PHRASES = (
+    "pricing is not published",
+    "pricing is not publicly disclosed",
+    "pricing is not disclosed",
+    "pricing is unavailable",
+    "pricing is not available",
+)
+
+
+def _normalize_statement(
+    statement: str,
+) -> str:
+    return (
+        " "
+        + " ".join(
+            statement
+            .strip()
+            .casefold()
+            .split()
+        )
+        + " "
+    )
+
+
 def build_smoke_claim(
 ) -> ResearchStageClaim:
     return ResearchStageClaim(
@@ -106,6 +144,53 @@ def _validate_detail(
         )
 
 
+def _validate_semantics(
+    competitor,
+) -> None:
+    for weakness in competitor.weaknesses:
+        normalized = _normalize_statement(
+            weakness.statement
+        )
+
+        if (
+            weakness.claim_kind
+            == ResearchClaimKind.INFERRED
+            and any(
+                phrase in normalized
+                for phrase in _INFERRED_ABSENCE_PHRASES
+            )
+        ):
+            raise RuntimeError(
+                "Live smoke produced an inferred "
+                "missing-feature weakness"
+            )
+
+        if any(
+            phrase in normalized
+            for phrase in _UNKNOWN_PRICING_PHRASES
+        ):
+            raise RuntimeError(
+                "Live smoke treated unavailable "
+                "pricing as a weakness"
+            )
+
+    if competitor.pricing is None:
+        return
+
+    normalized_pricing = _normalize_statement(
+        competitor.pricing.statement
+    )
+
+    if any(
+        phrase in normalized_pricing
+        for phrase in _UNKNOWN_PRICING_PHRASES
+    ):
+        raise RuntimeError(
+            "Live smoke represented unknown "
+            "pricing as pricing data"
+        )
+
+
 def validate_smoke_result(
     *,
     result,
@@ -137,6 +222,13 @@ def validate_smoke_result(
                 "result has no competitor cards"
             )
 
+        if len(result.competitors) < 2:
+            raise RuntimeError(
+                "Gym-management smoke requires at "
+                "least two defensible competitors "
+                "to protect discovery breadth"
+            )
+
         if not (
             runner
             .evidence_ledger
@@ -161,6 +253,8 @@ def validate_smoke_result(
     }
 
     for competitor in result.competitors:
+        _validate_semantics(competitor)
+
         claimed_source_ids.add(
             competitor.primary_source_id
         )
@@ -273,6 +367,16 @@ def main() -> None:
         "- page_retrieval_count: "
         f"{len(runner.evidence_ledger.page_retrieval_urls)}"
     )
+    print(
+        "- competitor_count: "
+        f"{len(result.competitors)}"
+    )
+
+    if elapsed_seconds > 90:
+        print(
+            "- latency_warning: live competitor "
+            "research exceeded 90 seconds"
+        )
 
     print("\nVERIFIED SEARCH QUERIES:")
     for query in (
