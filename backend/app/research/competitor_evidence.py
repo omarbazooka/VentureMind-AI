@@ -18,6 +18,7 @@ from app.schemas.research import (
     CompetitorDetail,
     CompetitorFinding,
     CompetitorProfile,
+    ResearchClaimKind,
     ResearchEvidenceQuality,
 )
 
@@ -102,6 +103,107 @@ class CompetitorAnalysisDraft(BaseModel):
             )
 
         return self
+
+
+_INFERRED_ABSENCE_PHRASES = (
+    " lacks ",
+    " lack ",
+    " does not have ",
+    " doesn't have ",
+    " does not offer ",
+    " doesn't offer ",
+    " does not support ",
+    " doesn't support ",
+    " does not include ",
+    " doesn't include ",
+    " missing ",
+)
+
+
+_UNKNOWN_PRICING_PHRASES = (
+    "pricing is not published",
+    "pricing is not publicly disclosed",
+    "pricing is not disclosed",
+    "pricing is unavailable",
+    "pricing is not available",
+)
+
+
+def _normalized_statement(
+    statement: str,
+) -> str:
+    return (
+        " "
+        + " ".join(
+            statement
+            .strip()
+            .casefold()
+            .split()
+        )
+        + " "
+    )
+
+
+def _contains_unknown_pricing_statement(
+    statement: str,
+) -> bool:
+    normalized = _normalized_statement(
+        statement
+    )
+
+    return any(
+        phrase in normalized
+        for phrase in _UNKNOWN_PRICING_PHRASES
+    )
+
+
+def _validate_competitor_semantics(
+    *,
+    competitors: list[CompetitorProfile],
+) -> None:
+    for competitor in competitors:
+        for weakness in competitor.weaknesses:
+            normalized_weakness = (
+                _normalized_statement(
+                    weakness.statement
+                )
+            )
+
+            if (
+                weakness.claim_kind
+                == ResearchClaimKind.INFERRED
+                and any(
+                    phrase in normalized_weakness
+                    for phrase
+                    in _INFERRED_ABSENCE_PHRASES
+                )
+            ):
+                raise CompetitorEvidenceVerificationError(
+                    "Inferred competitor weaknesses "
+                    "cannot assert missing features "
+                    "or capabilities from absence "
+                    "of evidence"
+                )
+
+            if _contains_unknown_pricing_statement(
+                weakness.statement
+            ):
+                raise CompetitorEvidenceVerificationError(
+                    "Unknown public pricing must not "
+                    "be represented as a competitor "
+                    "weakness"
+                )
+
+        if competitor.pricing is None:
+            continue
+
+        if _contains_unknown_pricing_statement(
+            competitor.pricing.statement
+        ):
+            raise CompetitorEvidenceVerificationError(
+                "Unknown competitor pricing must "
+                "be represented as pricing=None"
+            )
 
 
 def _append_unique_source_id(
@@ -242,6 +344,10 @@ def finalize_competitor_analysis(
             "detailed page through controlled "
             "page retrieval"
         )
+
+    _validate_competitor_semantics(
+        competitors=draft.competitors,
+    )
 
     claimed_source_ids = (
         _collect_claimed_source_ids(
