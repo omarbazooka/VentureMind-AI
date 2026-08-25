@@ -101,7 +101,7 @@ def _collect_claimed_source_ids(
         if (
             finding.is_numerical
             and not finding.evidence_source_ids
-        ): # Competitor X costs $79 with no source Evidence 
+        ):
             raise (
                 CompetitorEvidenceVerificationError(
                     "Numerical Competitor "
@@ -114,15 +114,15 @@ def _collect_claimed_source_ids(
             finding.evidence_source_ids
         ):
             if source_id in seen_source_ids:
-                continue # skip duplicates
+                continue
 
             seen_source_ids.add(
                 source_id
-            ) # add unique source ids
+            )
 
             claimed_source_ids.append(
                 source_id
-            ) 
+            )
 
     return claimed_source_ids
 
@@ -138,12 +138,21 @@ def finalize_competitor_analysis(
             AnalysisStage
             .COMPETITOR_INTELLIGENCE
         )
-    ): # Competitor analysis requires a COMPETITOR_INTELLIGENCE evidence ledger
+    ):
         raise (
             CompetitorEvidenceVerificationError(
                 "Competitor analysis requires "
                 "a COMPETITOR_INTELLIGENCE "
                 "evidence ledger"
+            )
+        )
+
+    if not evidence_ledger.search_queries:
+        raise (
+            CompetitorEvidenceVerificationError(
+                "Competitor intelligence must "
+                "attempt controlled research "
+                "before finalization"
             )
         )
 
@@ -171,7 +180,7 @@ def finalize_competitor_analysis(
             evidence_ledger.get_sources(
                 claimed_source_ids
             )
-        ) # Competitor analysis referenced evidence that was not returned by a controlled research tool
+        )
 
     except UnknownEvidenceSourceError as exc:
         raise (
