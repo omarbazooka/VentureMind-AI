@@ -15,7 +15,9 @@ from app.schemas.analysis import (
 )
 from app.schemas.research import (
     CompetitorAnalysis,
+    CompetitorDetail,
     CompetitorFinding,
+    CompetitorProfile,
     ResearchEvidenceQuality,
 )
 
@@ -27,13 +29,7 @@ class CompetitorEvidenceVerificationError(
 
 
 class CompetitorAnalysisDraft(BaseModel):
-    """
-    AI-facing competitor synthesis.
-
-    The LLM may reason about competitor findings
-    and reference controlled source IDs, but it
-    does not own canonical source metadata.
-    """
+    """AI-facing competitor synthesis without source metadata authority."""
 
     model_config = ConfigDict(
         extra="forbid"
@@ -42,6 +38,13 @@ class CompetitorAnalysisDraft(BaseModel):
     summary: str = Field(
         min_length=1,
         max_length=5000,
+    )
+
+    competitors: list[
+        CompetitorProfile
+    ] = Field(
+        default_factory=list,
+        max_length=5,
     )
 
     findings: list[
@@ -66,13 +69,25 @@ class CompetitorAnalysisDraft(BaseModel):
     ) -> "CompetitorAnalysisDraft":
         if (
             not self.findings
+            and not self.competitors
             and self.evidence_quality
             != ResearchEvidenceQuality.INSUFFICIENT
         ):
             raise ValueError(
                 "A Competitor draft without "
-                "findings must be marked "
-                "INSUFFICIENT"
+                "findings or competitor profiles "
+                "must be marked INSUFFICIENT"
+            )
+
+        if (
+            self.evidence_quality
+            != ResearchEvidenceQuality.INSUFFICIENT
+            and not self.competitors
+        ):
+            raise ValueError(
+                "A non-insufficient Competitor "
+                "draft must include competitor "
+                "profiles"
             )
 
         if (
@@ -89,10 +104,48 @@ class CompetitorAnalysisDraft(BaseModel):
         return self
 
 
+def _append_unique_source_id(
+    *,
+    source_id: str,
+    claimed_source_ids: list[str],
+    seen_source_ids: set[str],
+) -> None:
+    if source_id in seen_source_ids:
+        return
+
+    seen_source_ids.add(source_id)
+    claimed_source_ids.append(source_id)
+
+
+def _collect_detail_source_ids(
+    *,
+    detail: CompetitorDetail,
+    claimed_source_ids: list[str],
+    seen_source_ids: set[str],
+) -> None:
+    if (
+        detail.is_numerical
+        and not detail.evidence_source_ids
+    ):
+        raise CompetitorEvidenceVerificationError(
+            "Numerical Competitor details must "
+            "reference controlled evidence"
+        )
+
+    for source_id in detail.evidence_source_ids:
+        _append_unique_source_id(
+            source_id=source_id,
+            claimed_source_ids=(
+                claimed_source_ids
+            ),
+            seen_source_ids=seen_source_ids,
+        )
+
+
 def _collect_claimed_source_ids(
-    findings: list[
-        CompetitorFinding
-    ],
+    *,
+    findings: list[CompetitorFinding],
+    competitors: list[CompetitorProfile],
 ) -> list[str]:
     claimed_source_ids: list[str] = []
     seen_source_ids: set[str] = set()
@@ -102,26 +155,52 @@ def _collect_claimed_source_ids(
             finding.is_numerical
             and not finding.evidence_source_ids
         ):
-            raise (
-                CompetitorEvidenceVerificationError(
-                    "Numerical Competitor "
-                    "findings must reference "
-                    "controlled evidence"
-                )
+            raise CompetitorEvidenceVerificationError(
+                "Numerical Competitor findings "
+                "must reference controlled evidence"
             )
 
         for source_id in (
             finding.evidence_source_ids
         ):
-            if source_id in seen_source_ids:
-                continue
-
-            seen_source_ids.add(
-                source_id
+            _append_unique_source_id(
+                source_id=source_id,
+                claimed_source_ids=(
+                    claimed_source_ids
+                ),
+                seen_source_ids=seen_source_ids,
             )
 
-            claimed_source_ids.append(
-                source_id
+    for competitor in competitors:
+        _append_unique_source_id(
+            source_id=competitor.primary_source_id,
+            claimed_source_ids=(
+                claimed_source_ids
+            ),
+            seen_source_ids=seen_source_ids,
+        )
+
+        details = [
+            *competitor.strengths,
+            *competitor.weaknesses,
+        ]
+
+        for optional_detail in (
+            competitor.pricing,
+            competitor.positioning,
+            competitor.target_audience,
+            competitor.geography,
+        ):
+            if optional_detail is not None:
+                details.append(optional_detail)
+
+        for detail in details:
+            _collect_detail_source_ids(
+                detail=detail,
+                claimed_source_ids=(
+                    claimed_source_ids
+                ),
+                seen_source_ids=seen_source_ids,
             )
 
     return claimed_source_ids
@@ -139,26 +218,35 @@ def finalize_competitor_analysis(
             .COMPETITOR_INTELLIGENCE
         )
     ):
-        raise (
-            CompetitorEvidenceVerificationError(
-                "Competitor analysis requires "
-                "a COMPETITOR_INTELLIGENCE "
-                "evidence ledger"
-            )
+        raise CompetitorEvidenceVerificationError(
+            "Competitor analysis requires a "
+            "COMPETITOR_INTELLIGENCE "
+            "evidence ledger"
         )
 
     if not evidence_ledger.search_queries:
-        raise (
-            CompetitorEvidenceVerificationError(
-                "Competitor intelligence must "
-                "attempt controlled research "
-                "before finalization"
-            )
+        raise CompetitorEvidenceVerificationError(
+            "Competitor intelligence must "
+            "attempt controlled research "
+            "before finalization"
+        )
+
+    if (
+        draft.evidence_quality
+        != ResearchEvidenceQuality.INSUFFICIENT
+        and not evidence_ledger.page_retrieval_urls
+    ):
+        raise CompetitorEvidenceVerificationError(
+            "A non-insufficient Competitor "
+            "analysis must inspect at least one "
+            "detailed page through controlled "
+            "page retrieval"
         )
 
     claimed_source_ids = (
         _collect_claimed_source_ids(
-            draft.findings
+            findings=draft.findings,
+            competitors=draft.competitors,
         )
     )
 
@@ -167,12 +255,10 @@ def finalize_competitor_analysis(
         != ResearchEvidenceQuality.INSUFFICIENT
         and not claimed_source_ids
     ):
-        raise (
-            CompetitorEvidenceVerificationError(
-                "A non-insufficient Competitor "
-                "analysis must cite controlled "
-                "evidence"
-            )
+        raise CompetitorEvidenceVerificationError(
+            "A non-insufficient Competitor "
+            "analysis must cite controlled "
+            "evidence"
         )
 
     try:
@@ -181,18 +267,16 @@ def finalize_competitor_analysis(
                 claimed_source_ids
             )
         )
-
     except UnknownEvidenceSourceError as exc:
-        raise (
-            CompetitorEvidenceVerificationError(
-                "Competitor analysis referenced "
-                "evidence that was not returned "
-                "by a controlled research tool"
-            )
+        raise CompetitorEvidenceVerificationError(
+            "Competitor analysis referenced "
+            "evidence that was not returned "
+            "by a controlled research tool"
         ) from exc
 
     return CompetitorAnalysis(
         summary=draft.summary,
+        competitors=draft.competitors,
         findings=draft.findings,
         evidence_sources=canonical_sources,
         evidence_quality=(
