@@ -76,6 +76,36 @@ def make_ledger_with_source(
     return ledger
 
 
+def make_ledger_after_empty_search(
+) -> ResearchEvidenceLedger:
+    ledger = ResearchEvidenceLedger(
+        stage=(
+            AnalysisStage
+            .COMPETITOR_INTELLIGENCE
+        )
+    )
+
+    ledger.record_web_search_result(
+        WebSearchResult(
+            query=(
+                "independent gym management "
+                "software competitors Egypt"
+            ),
+            items=[],
+        ),
+        retrieved_at=datetime(
+            2026,
+            8,
+            25,
+            10,
+            0,
+            tzinfo=timezone.utc,
+        ),
+    )
+
+    return ledger
+
+
 def test_finalizer_builds_canonical_sources_from_ledger():
     ledger = make_ledger_with_source()
 
@@ -157,12 +187,7 @@ def test_finalizer_builds_canonical_sources_from_ledger():
 
 
 def test_finalizer_rejects_hallucinated_source_id():
-    ledger = ResearchEvidenceLedger(
-        stage=(
-            AnalysisStage
-            .COMPETITOR_INTELLIGENCE
-        )
-    )
+    ledger = make_ledger_after_empty_search()
 
     draft = CompetitorAnalysisDraft(
         summary=(
@@ -204,12 +229,7 @@ def test_finalizer_rejects_hallucinated_source_id():
 
 
 def test_finalizer_rejects_non_insufficient_without_sources():
-    ledger = ResearchEvidenceLedger(
-        stage=(
-            AnalysisStage
-            .COMPETITOR_INTELLIGENCE
-        )
-    )
+    ledger = make_ledger_after_empty_search()
 
     draft = CompetitorAnalysisDraft(
         summary=(
@@ -251,12 +271,7 @@ def test_finalizer_rejects_non_insufficient_without_sources():
 
 
 def test_finalizer_rejects_numerical_pricing_without_source():
-    ledger = ResearchEvidenceLedger(
-        stage=(
-            AnalysisStage
-            .COMPETITOR_INTELLIGENCE
-        )
-    )
+    ledger = make_ledger_after_empty_search()
 
     draft = CompetitorAnalysisDraft(
         summary=(
@@ -298,13 +313,8 @@ def test_finalizer_rejects_numerical_pricing_without_source():
         )
 
 
-def test_finalizer_accepts_insufficient_without_findings():
-    ledger = ResearchEvidenceLedger(
-        stage=(
-            AnalysisStage
-            .COMPETITOR_INTELLIGENCE
-        )
-    )
+def test_finalizer_accepts_insufficient_after_empty_search():
+    ledger = make_ledger_after_empty_search()
 
     draft = CompetitorAnalysisDraft(
         summary=(
@@ -317,8 +327,9 @@ def test_finalizer_accepts_insufficient_without_findings():
             .INSUFFICIENT
         ),
         limitations=[
-            "No reliable competitor "
-            "sources were found."
+            "The controlled search did not "
+            "return reliable competitor "
+            "evidence."
         ],
     )
 
@@ -343,6 +354,46 @@ def test_finalizer_accepts_insufficient_without_findings():
             .INSUFFICIENT
         )
     )
+
+    assert len(
+        ledger.search_queries
+    ) == 1
+
+
+def test_finalizer_rejects_when_no_controlled_search_was_attempted():
+    ledger = ResearchEvidenceLedger(
+        stage=(
+            AnalysisStage
+            .COMPETITOR_INTELLIGENCE
+        )
+    )
+
+    draft = CompetitorAnalysisDraft(
+        summary=(
+            "No competitor evidence "
+            "was available."
+        ),
+        findings=[],
+        evidence_quality=(
+            ResearchEvidenceQuality
+            .INSUFFICIENT
+        ),
+        limitations=[
+            "No evidence was available."
+        ],
+    )
+
+    with pytest.raises(
+        CompetitorEvidenceVerificationError,
+        match=(
+            "must attempt controlled "
+            "research"
+        ),
+    ):
+        finalize_competitor_analysis(
+            draft=draft,
+            evidence_ledger=ledger,
+        )
 
 
 def test_finalizer_rejects_wrong_stage_ledger():
