@@ -15,13 +15,16 @@ from app.schemas.analysis import (
     AnalysisStage,
 )
 from app.tools.crewai import (
+    ControlledBatchPageRetrievalTool,
     ControlledWebSearchTool,
 )
 from app.tools.gateway import (
+    PageRetrievalProvider,
     ToolGateway,
     WebSearchProvider,
 )
 from app.tools.providers.firecrawl import (
+    FirecrawlPageRetrievalProvider,
     FirecrawlWebSearchProvider,
 )
 
@@ -32,12 +35,12 @@ def build_competitor_intelligence_runner(
     web_search_provider: (
         WebSearchProvider | None
     ) = None,
+    page_retrieval_provider: (
+        PageRetrievalProvider | None
+    ) = None,
     model: str | None = None,
 ) -> CompetitorIntelligenceCrewRunner:
-    """
-    Build one isolated Competitor Intelligence
-    stage runtime.
-    """
+    """Build one isolated Competitor Intelligence runtime."""
 
     resolved_llm_gateway = (
         llm_gateway
@@ -51,55 +54,61 @@ def build_competitor_intelligence_runner(
         else FirecrawlWebSearchProvider()
     )
 
+    resolved_page_provider = (
+        page_retrieval_provider
+        if page_retrieval_provider is not None
+        else FirecrawlPageRetrievalProvider()
+    )
+
     resolved_model = (
         model
         if model is not None
-        else (
-            settings
-            .competitor_intelligence_model
-        )
+        else settings.competitor_intelligence_model
     )
 
-    evidence_ledger = (
-        ResearchEvidenceLedger(
-            stage=(
-                AnalysisStage
-                .COMPETITOR_INTELLIGENCE
-            )
-        )
+    evidence_ledger = ResearchEvidenceLedger(
+        stage=AnalysisStage.COMPETITOR_INTELLIGENCE
     )
 
     tool_gateway = ToolGateway(
         web_search_provider=(
             resolved_search_provider
-        )
+        ),
+        page_retrieval_provider=(
+            resolved_page_provider
+        ),
     )
 
-    research_tool = (
-        ControlledWebSearchTool(
+    search_tool = ControlledWebSearchTool(
+        gateway=tool_gateway,
+        stage=AnalysisStage.COMPETITOR_INTELLIGENCE,
+        evidence_ledger=evidence_ledger,
+        max_usage_count=2,
+    )
+
+    page_retrieval_tool = (
+        ControlledBatchPageRetrievalTool(
             gateway=tool_gateway,
             stage=(
                 AnalysisStage
                 .COMPETITOR_INTELLIGENCE
             ),
             evidence_ledger=evidence_ledger,
-            max_usage_count=4,
+            max_usage_count=2,
+            max_workers=4,
         )
     )
 
-    crewai_llm = (
-        CrewAILLMGatewayAdapter(
-            gateway=resolved_llm_gateway,
-            model=resolved_model,
-        )
+    crewai_llm = CrewAILLMGatewayAdapter(
+        gateway=resolved_llm_gateway,
+        model=resolved_model,
     )
 
-    return (
-        CompetitorIntelligenceCrewRunner(
-            llm=crewai_llm,
-            research_tool=research_tool,
-            evidence_ledger=(
-                evidence_ledger
-            ),
-        )
+    return CompetitorIntelligenceCrewRunner(
+        llm=crewai_llm,
+        search_tool=search_tool,
+        page_retrieval_tool=(
+            page_retrieval_tool
+        ),
+        evidence_ledger=evidence_ledger,
     )
