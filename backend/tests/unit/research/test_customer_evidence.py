@@ -19,6 +19,7 @@ from app.schemas.research import (
     ResearchEvidenceQuality,
 )
 from app.schemas.tools import (
+    PageRetrievalResult,
     WebSearchItem,
     WebSearchResult,
 )
@@ -46,6 +47,16 @@ def _build_customer_ledger(
                     snippet="Small gym owners primarily track payments using Excel and WhatsApp.",
                 ),
             ],
+        ),
+        retrieved_at=datetime(2026, 8, 24, 20, 0, tzinfo=timezone.utc),
+    )
+
+    ledger.record_page_retrieval_result(
+        PageRetrievalResult(
+            source_id="web_retention_1",
+            url="https://fitness.example/report",
+            title="Egypt Fitness Report",
+            content="62% of surveyed gym operators report retention friction.",
         ),
         retrieved_at=datetime(2026, 8, 24, 20, 0, tzinfo=timezone.utc),
     )
@@ -238,3 +249,122 @@ def test_accepts_valid_insufficient_analysis():
     assert len(result.findings) == 0
     assert len(result.evidence_sources) == 0
     assert result.limitations == draft.limitations
+
+
+def test_rejects_decision_critical_observed_finding_without_page_retrieval():
+    ledger = ResearchEvidenceLedger(stage=AnalysisStage.CUSTOMER_INTELLIGENCE)
+    ledger.record_web_search_result(
+        WebSearchResult(
+            query="egypt gym membership retention",
+            items=[
+                WebSearchItem(
+                    source_id="web_retention_1",
+                    title="Egypt Fitness Report",
+                    url="https://fitness.example/report",
+                    snippet="62% of surveyed gym operators report retention friction.",
+                )
+            ],
+        )
+    )
+
+    draft = CustomerAnalysisDraft(
+        summary="Customer summary.",
+        findings=[
+            CustomerFinding(
+                statement="Independent gym operators report membership tracking pain.",
+                category=CustomerFindingCategory.PAIN_POINT,
+                claim_kind=ResearchClaimKind.OBSERVED,
+                confidence=0.8,
+                evidence_source_ids=["web_retention_1"],
+                is_numerical=False,
+            )
+        ],
+        evidence_quality=ResearchEvidenceQuality.MODERATE,
+        limitations=[],
+    )
+
+    with pytest.raises(
+        CustomerEvidenceVerificationError,
+        match="require controlled detailed-page evidence",
+    ):
+        finalize_customer_analysis(
+            draft=draft,
+            evidence_ledger=ledger,
+        )
+
+
+def test_accepts_decision_critical_observed_finding_with_page_retrieval():
+    ledger = ResearchEvidenceLedger(stage=AnalysisStage.CUSTOMER_INTELLIGENCE)
+    ledger.record_web_search_result(
+        WebSearchResult(
+            query="egypt gym membership retention",
+            items=[
+                WebSearchItem(
+                    source_id="web_retention_1",
+                    title="Egypt Fitness Report",
+                    url="https://fitness.example/report",
+                    snippet="62% of surveyed gym operators report retention friction.",
+                )
+            ],
+        )
+    )
+    ledger.record_page_retrieval_result(
+        PageRetrievalResult(
+            source_id="web_retention_1",
+            url="https://fitness.example/report",
+            title="Egypt Fitness Report",
+            content="Detailed report content.",
+        )
+    )
+
+    draft = CustomerAnalysisDraft(
+        summary="Customer summary.",
+        findings=[
+            CustomerFinding(
+                statement="Independent gym operators report membership tracking pain.",
+                category=CustomerFindingCategory.PAIN_POINT,
+                claim_kind=ResearchClaimKind.OBSERVED,
+                confidence=0.8,
+                evidence_source_ids=["web_retention_1"],
+                is_numerical=False,
+            )
+        ],
+        evidence_quality=ResearchEvidenceQuality.MODERATE,
+        limitations=[],
+    )
+
+    result = finalize_customer_analysis(
+        draft=draft,
+        evidence_ledger=ledger,
+    )
+
+    assert len(result.findings) == 1
+    assert result.evidence_sources[0].source_id == "web_retention_1"
+
+
+def test_accepts_inferred_critical_finding_without_page_retrieval():
+    ledger = _build_customer_ledger()
+
+    draft = CustomerAnalysisDraft(
+        summary="Customer summary.",
+        findings=[
+            CustomerFinding(
+                statement="Fragmented workflows may create friction for small gyms.",
+                category=CustomerFindingCategory.PAIN_POINT,
+                claim_kind=ResearchClaimKind.INFERRED,
+                confidence=0.5,
+                evidence_source_ids=["web_retention_1"],
+                is_numerical=False,
+            )
+        ],
+        evidence_quality=ResearchEvidenceQuality.MODERATE,
+        limitations=[],
+    )
+
+    result = finalize_customer_analysis(
+        draft=draft,
+        evidence_ledger=ledger,
+    )
+
+    assert len(result.findings) == 1
+

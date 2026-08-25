@@ -164,6 +164,12 @@ def test_builds_customer_crew():
     assert "DESK RESEARCH DOES NOT PROVE PMF" in (
         research_task.description
     )
+    assert "Competitor/provider existence is supply-side evidence" in (
+        research_task.description
+    )
+    assert "Do NOT mark provider/competitor presence as an OBSERVED DEMAND_SIGNAL" in (
+        synthesis_task.description
+    )
 
     assert synthesis_task.tools == []
     assert synthesis_task.output_pydantic is CustomerAnalysisDraft

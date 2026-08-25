@@ -83,6 +83,11 @@ def build_smoke_claim(
     )
 
 
+from app.research.customer_evidence import (
+    _has_decision_critical_observed_findings,
+)
+
+
 def validate_smoke_result(
     *,
     result,
@@ -102,6 +107,16 @@ def validate_smoke_result(
         raise RuntimeError(
             "Customer intelligence exceeded "
             "the 3-search hard limit budget"
+        )
+
+    if (
+        result.evidence_quality != ResearchEvidenceQuality.INSUFFICIENT
+        and _has_decision_critical_observed_findings(result.findings)
+        and not runner.evidence_ledger.page_retrieval_urls
+    ):
+        raise RuntimeError(
+            "Non-insufficient Customer result with decision-critical "
+            "observed findings must have at least one detailed page retrieval"
         )
 
     claimed_source_ids = {

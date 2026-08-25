@@ -16,8 +16,35 @@ from app.schemas.analysis import (
 from app.schemas.research import (
     CustomerAnalysis,
     CustomerFinding,
+    CustomerFindingCategory,
+    ResearchClaimKind,
     ResearchEvidenceQuality,
 )
+
+
+DECISION_CRITICAL_CUSTOMER_CATEGORIES = {
+    CustomerFindingCategory.PAIN_POINT,
+    CustomerFindingCategory.ALTERNATIVE,
+    CustomerFindingCategory.BUYING_BEHAVIOR,
+    CustomerFindingCategory.DEMAND_SIGNAL,
+}
+
+
+def _has_decision_critical_observed_findings(
+    findings: list[CustomerFinding],
+) -> bool:
+    for finding in findings:
+        if (
+            finding.claim_kind == ResearchClaimKind.OBSERVED
+            and finding.category in DECISION_CRITICAL_CUSTOMER_CATEGORIES
+        ):
+            return True
+        if (
+            finding.is_numerical
+            and finding.claim_kind == ResearchClaimKind.OBSERVED
+        ):
+            return True
+    return False
 
 
 class CustomerEvidenceVerificationError(
@@ -133,6 +160,17 @@ def finalize_customer_analysis(
             draft.findings
         )
     )
+
+    if (
+        draft.evidence_quality
+        != ResearchEvidenceQuality.INSUFFICIENT
+        and _has_decision_critical_observed_findings(draft.findings)
+        and not evidence_ledger.page_retrieval_urls
+    ):
+        raise CustomerEvidenceVerificationError(
+            "Decision-critical observed Customer findings "
+            "require controlled detailed-page evidence"
+        )
 
     if (
         draft.evidence_quality
