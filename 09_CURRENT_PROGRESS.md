@@ -34,32 +34,31 @@
   - Unknown pricing represented as `pricing=None`.
 
 ### 3. Customer Intelligence Stage
-- **Status:** COMPLETED & VALIDATED (FINAL HARDENING COMPLETE)
+- **Status:** FINAL HARDENING IMPLEMENTED; FOCUSED REGRESSION VERIFIED
 - **Implementation:** `CustomerIntelligenceCrewRunner` (`max_iter=4`), `CustomerAnalysisDraft`, `finalize_customer_analysis`, `execute_customer_intelligence_stage`.
 - **Hardening Rules:**
   - Deterministic enforcement in `finalize_customer_analysis`: Non-insufficient customer results with decision-critical `OBSERVED` findings (`PAIN_POINT`, `ALTERNATIVE`, `BUYING_BEHAVIOR`, `DEMAND_SIGNAL`) or ANY `is_numerical=True` finding strictly require at least one controlled detailed page retrieval in `evidence_ledger.page_retrieval_urls`.
-  - Supply-Side vs Customer Demand Rule: Competitor/provider existence is supply-side evidence, not direct customer-demand evidence. Provider presence alone MUST NOT be classified as an `OBSERVED DEMAND_SIGNAL` (must be `INFERRED` or omitted).
+  - Supply-Side vs Customer Demand Rule: Competitor/provider existence is supply-side evidence, not direct customer-demand evidence. Provider presence alone MUST NOT survive as an `OBSERVED DEMAND_SIGNAL`.
+  - Vendor-only deterministic normalization: if `PAIN_POINT`, `ALTERNATIVE`, `BUYING_BEHAVIOR`, or `DEMAND_SIGNAL` relies only on likely vendor-marketing evidence, application code downgrades it to `INFERRED` and caps confidence at `0.6`.
+  - Vendor-only evidence-quality correction: if all cited sources are likely vendor marketing, `STRONG`/`MODERATE` is downgraded to `WEAK`.
+  - Vendor supply → demand summary correction: language implying vendor presence/pricing proves demand or adoption is deterministically bounded to active supply while direct customer demand/adoption remains unverified.
+  - Direct customer evidence (e.g. surveys/interviews/reviews/practitioner discussions) is not downgraded by the vendor-only guard.
   - Profile vs Web Provenance Rule: Frozen IdeaProfile defines the research subject but is not web evidence; web evidence source IDs must not be attached to facts merely copied from the profile unless independently supported.
   - Mandatory search attempt check before finalization (`search_queries` check).
-  - Source quality & directness discipline: direct customer evidence preferred over vendor marketing claims.
-  - Geography match: prohibits silently generalizing global gym-owner behavior to Egypt; requires explicit geographic bounding and `INFERRED` classification or limitation recording.
-  - Bounded agent iterations (`max_iter=4`), improving runtime latency from ~311.45s to ~19.40s (over 16x speed improvement).
-  - Strict prohibition of persona fabrication (demographics/names/salaries), fake willingness-to-pay claims, or desk research PMF claims.
-- **Latest Live Validation Metrics:**
+  - Source quality & directness discipline, geography matching, no fake WTP/PMF/personas.
+  - Bounded agent iterations (`max_iter=4`), with the last external live smoke improving runtime from ~311.45s to ~19.40s.
+- **Latest external live validation before deterministic vendor normalization:**
   - `elapsed_seconds`: 19.40s
   - `search_count`: 1
   - `page_retrieval_count`: 1
   - `finding_count`: 11
   - `source_count`: 1
-  - `evidence_quality`: MODERATE
-  - `customer_agent max_iter`: 4
-  - `known primary-research limitations`: Honest, robust primary-research limitation tracking for Egyptian local gym workflows, WTP, and buying behavior.
-
----
-
-## Current Backend Test Suite Status
-- **Targeted Unit Tests:** 19 passed cleanly in 7.13s.
-- **Full Backend Pytest Suite:** 222 passed cleanly in 59.42s (0 failed, 0 errors).
+  - `evidence_quality`: MODERATE before the new vendor-only normalizer; the same vendor-only shape now deterministically downgrades to `WEAK` and reclassifies sensitive claims.
+- **Focused post-fix verification:**
+  - Exact GymWyse-style vendor-only regression replay + direct-survey control cases passed in the ChatGPT sandbox (`3 passed`).
+  - The prior failing shape is now deterministically bounded even if the LLM ignores prompt guidance.
+  - Last complete project pytest baseline immediately before this guard: `222 passed, 26 warnings in 59.42s`.
+  - Full project pytest and real Gemini/Firecrawl smoke were not re-executed in the ChatGPT sandbox because CrewAI/project API credentials are not available in that environment; no such run is claimed here.
 
 ---
 
@@ -72,3 +71,4 @@
 
 ## Next Immediate Task
 - **Research Join + Evidence Gate** (Cross-stage aggregation, evidence scoring, targeted retry coordination, and strategy preparation).
+- Do not begin until the project environment has rerun the full pytest suite and Customer live smoke against the current master, because the ChatGPT sandbox cannot access the project's CrewAI/Gemini/Firecrawl runtime credentials.
