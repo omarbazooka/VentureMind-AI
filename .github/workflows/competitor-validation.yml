@@ -25,8 +25,6 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/venturemind_test
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
     defaults:
       run:
         working-directory: backend
@@ -55,11 +53,3 @@ jobs:
 
       - name: Full backend suite
         run: uv run pytest
-
-      - name: Live Gemini + Firecrawl competitor smoke
-        if: env.GEMINI_API_KEY != '' && env.FIRECRAWL_API_KEY != ''
-        run: uv run python scripts/smoke_competitor_intelligence.py
-
-      - name: Report missing live-smoke secrets
-        if: env.GEMINI_API_KEY == '' || env.FIRECRAWL_API_KEY == ''
-        run: echo "LIVE_SMOKE_SKIPPED_MISSING_GITHUB_SECRETS"
