@@ -1,0 +1,40 @@
+name: Validate Day 5
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      APP_ENV: test
+      DATABASE_URL: sqlite+pysqlite:///:memory:
+      GEMINI_API_KEY: test-key
+      GROQ_API_KEY: test-key
+      FIRECRAWL_API_KEY: test-key
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Sync dependencies
+        run: uv sync --frozen --dev
+
+      - name: Focused Research Join and Evidence Gate tests
+        run: uv run pytest tests/unit/research/test_evidence_gate.py tests/unit/services/test_research_join.py tests/unit/flows/test_business_analysis_research_advance.py -v
+
+      - name: Full backend test suite
+        run: uv run pytest
