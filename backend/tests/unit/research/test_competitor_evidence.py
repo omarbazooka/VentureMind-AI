@@ -18,8 +18,6 @@ from app.schemas.analysis import (
 )
 from app.schemas.research import (
     CompetitorDetail,
-    CompetitorFinding,
-    CompetitorFindingCategory,
     CompetitorProfile,
     CompetitorRelationship,
     ResearchClaimKind,
@@ -127,21 +125,13 @@ def make_profile(
     )
 
 
-def test_finalizer_builds_frontend_ready_competitor_profiles():
+def test_finalizer_builds_frontend_ready_profiles_without_redundant_findings():
     ledger = make_ledger_with_detail_source()
 
     draft = CompetitorAnalysisDraft(
         summary="A direct competitor was verified.",
         competitors=[make_profile()],
-        findings=[
-            CompetitorFinding(
-                category=CompetitorFindingCategory.COMPETITOR,
-                statement="A direct competitor exists.",
-                claim_kind=ResearchClaimKind.OBSERVED,
-                confidence=0.9,
-                evidence_source_ids=["web_real"],
-            )
-        ],
+        findings=[],
         evidence_quality=ResearchEvidenceQuality.STRONG,
         limitations=[],
     )
@@ -152,6 +142,7 @@ def test_finalizer_builds_frontend_ready_competitor_profiles():
     )
 
     assert len(result.competitors) == 1
+    assert result.findings == []
     assert result.competitors[0].name == "Competitor One"
     assert (
         result.competitors[0].pricing.statement
