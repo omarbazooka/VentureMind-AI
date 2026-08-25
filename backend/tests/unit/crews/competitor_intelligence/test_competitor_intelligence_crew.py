@@ -30,6 +30,9 @@ from app.schemas.research import (
     ResearchEvidenceQuality,
     ResearchStageClaim,
 )
+from app.schemas.tools import (
+    WebSearchResult,
+)
 
 
 class FakeLLM(BaseLLM):
@@ -116,10 +119,32 @@ def make_draft(
             .INSUFFICIENT
         ),
         limitations=[
-            "This unit test does not "
-            "perform external research."
+            "The unit-test ledger records "
+            "an empty controlled search."
         ],
     )
+
+
+def make_competitor_ledger(
+) -> ResearchEvidenceLedger:
+    ledger = ResearchEvidenceLedger(
+        stage=(
+            AnalysisStage
+            .COMPETITOR_INTELLIGENCE
+        )
+    )
+
+    ledger.record_web_search_result(
+        WebSearchResult(
+            query=(
+                "unit test competitor "
+                "research attempt"
+            ),
+            items=[],
+        )
+    )
+
+    return ledger
 
 
 def make_runner(
@@ -134,12 +159,7 @@ def make_runner(
                 FakeCompetitorResearchTool()
             ),
             evidence_ledger=(
-                ResearchEvidenceLedger(
-                    stage=(
-                        AnalysisStage
-                        .COMPETITOR_INTELLIGENCE
-                    )
-                )
+                make_competitor_ledger()
             ),
         )
     )
@@ -192,6 +212,12 @@ def test_builds_competitor_crew():
 
     assert (
         "indirect alternatives"
+        in research_task.description
+    )
+
+    assert (
+        "MUST use the controlled "
+        "research tool at least once"
         in research_task.description
     )
 
