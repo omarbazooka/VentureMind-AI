@@ -168,6 +168,109 @@ class CustomerFinding(BaseResearchFinding):
     category: CustomerFindingCategory
 
 
+class CompetitorRelationship(StrEnum):
+    DIRECT = "DIRECT"
+    INDIRECT = "INDIRECT"
+    SUBSTITUTE = "SUBSTITUTE"
+
+
+class CompetitorDetail(BaseModel):
+    """One evidence-aware competitor card detail."""
+
+    model_config = ConfigDict(
+        extra="forbid"
+    )
+
+    statement: str = Field(
+        min_length=1,
+        max_length=1200,
+    )
+
+    claim_kind: ResearchClaimKind
+
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+    )
+
+    evidence_source_ids: list[str] = Field(
+        default_factory=list,
+        max_length=6,
+    )
+
+    is_numerical: bool = False
+
+    @model_validator(mode="after")
+    def validate_detail(
+        self,
+    ) -> "CompetitorDetail":
+        if (
+            self.claim_kind
+            == ResearchClaimKind.OBSERVED
+            and not self.evidence_source_ids
+        ):
+            raise ValueError(
+                "Observed competitor details "
+                "must reference evidence"
+            )
+
+        if (
+            self.is_numerical
+            and not self.evidence_source_ids
+        ):
+            raise ValueError(
+                "Numerical competitor details "
+                "must reference evidence"
+            )
+
+        return self
+
+
+class CompetitorProfile(BaseModel):
+    """Frontend-ready structured profile for one competitor."""
+
+    model_config = ConfigDict(
+        extra="forbid"
+    )
+
+    name: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+
+    relationship: CompetitorRelationship
+
+    relevance_summary: str = Field(
+        min_length=1,
+        max_length=1600,
+    )
+
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+    )
+
+    primary_source_id: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+
+    strengths: list[CompetitorDetail] = Field(
+        default_factory=list,
+        max_length=6,
+    )
+
+    weaknesses: list[CompetitorDetail] = Field(
+        default_factory=list,
+        max_length=6,
+    )
+
+    pricing: CompetitorDetail | None = None
+    positioning: CompetitorDetail | None = None
+    target_audience: CompetitorDetail | None = None
+    geography: CompetitorDetail | None = None
+
+
 def _validate_result_evidence(
     *,
     findings: list[BaseResearchFinding],
@@ -227,6 +330,35 @@ def _validate_result_evidence(
         )
 
 
+def _competitor_profile_source_ids(
+    competitor: CompetitorProfile,
+) -> set[str]:
+    source_ids = {
+        competitor.primary_source_id
+    }
+
+    details: list[CompetitorDetail] = [
+        *competitor.strengths,
+        *competitor.weaknesses,
+    ]
+
+    for optional_detail in (
+        competitor.pricing,
+        competitor.positioning,
+        competitor.target_audience,
+        competitor.geography,
+    ):
+        if optional_detail is not None:
+            details.append(optional_detail)
+
+    for detail in details:
+        source_ids.update(
+            detail.evidence_source_ids
+        )
+
+    return source_ids
+
+
 class MarketAnalysis(BaseModel):
     model_config = ConfigDict(
         extra="forbid"
@@ -284,6 +416,13 @@ class CompetitorAnalysis(BaseModel):
         max_length=5000,
     )
 
+    competitors: list[
+        CompetitorProfile
+    ] = Field(
+        default_factory=list,
+        max_length=5,
+    )
+
     findings: list[
         CompetitorFinding
     ] = Field(
@@ -319,6 +458,50 @@ class CompetitorAnalysis(BaseModel):
             ),
             limitations=self.limitations,
         )
+
+        if (
+            self.evidence_quality
+            != ResearchEvidenceQuality.INSUFFICIENT
+            and not self.competitors
+        ):
+            raise ValueError(
+                "A non-insufficient Competitor "
+                "analysis must include competitor "
+                "profiles"
+            )
+
+        normalized_names = [
+            competitor.name.strip().casefold()
+            for competitor in self.competitors
+        ]
+
+        if len(normalized_names) != len(
+            set(normalized_names)
+        ):
+            raise ValueError(
+                "Competitor profile names "
+                "must be unique"
+            )
+
+        known_source_ids = {
+            source.source_id
+            for source in self.evidence_sources
+        }
+
+        for competitor in self.competitors:
+            unknown_source_ids = (
+                _competitor_profile_source_ids(
+                    competitor
+                )
+                - known_source_ids
+            )
+
+            if unknown_source_ids:
+                raise ValueError(
+                    "Competitor profile references "
+                    "unknown evidence source IDs: "
+                    f"{sorted(unknown_source_ids)}"
+                )
 
         return self
 
@@ -370,9 +553,6 @@ class CustomerAnalysis(BaseModel):
         )
 
         return self
-    
-
-
 
 
 class ResearchStageClaim(BaseModel):
