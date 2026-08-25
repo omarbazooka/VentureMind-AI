@@ -144,7 +144,7 @@ def test_builds_fast_competitor_crew():
 
     assert agent.role == "Competitor Intelligence Analyst"
     assert agent.allow_delegation is False
-    assert agent.max_iter == 6
+    assert agent.max_iter == 4
 
     assert research_task.agent is agent
     assert synthesis_task.agent is agent

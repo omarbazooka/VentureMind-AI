@@ -278,6 +278,36 @@ def test_finalizer_accepts_insufficient_after_empty_search():
     )
 
 
+def test_finalizer_rejects_pmf_language_in_summary():
+    ledger = make_ledger_with_detail_source()
+
+    draft = CompetitorAnalysisDraft(
+        summary="The evidence demonstrates strong localized product-market fit in Egypt.",
+        competitors=[
+            CompetitorProfile(
+                name="Gymmawy",
+                relationship=CompetitorRelationship.DIRECT,
+                relevance_summary="Direct competitor in Egypt.",
+                confidence=0.8,
+                primary_source_id="web_real",
+            )
+        ],
+        findings=[],
+        evidence_quality=ResearchEvidenceQuality.MODERATE,
+        limitations=[],
+    )
+
+    with pytest.raises(
+        CompetitorEvidenceVerificationError,
+        match="product-market fit or PMF",
+    ):
+        finalize_competitor_analysis(
+            draft=draft,
+            evidence_ledger=ledger,
+        )
+
+
+
 def test_competitor_detail_rejects_numerical_pricing_without_source():
     with pytest.raises(
         ValueError,

@@ -1,25 +1,62 @@
-# VentureMind AI — Current Progress
+# VentureMind AI — Master Current Progress & Milestone Tracking
 
-## Customer Intelligence — Status: VALIDATED COMPLETE
+## Day 1 — Foundation & Data Architecture
+- **Status:** COMPLETED & VALIDATED
+- **Key Modules:** Database models, Alembic migrations, Pydantic schemas, initial FastAPI application structure.
 
-### Implementation Details
-- Created `app/research/customer_evidence.py`: AI-facing `CustomerAnalysisDraft` schema and deterministic `finalize_customer_analysis` evidence verification function.
-- Created `app/crews/customer_intelligence/crew.py`: Focused `Customer Intelligence Analyst` agent and two-task CrewAI pipeline (bounded research dossier creation + structured draft synthesis).
-- Created `app/crews/customer_intelligence/runtime.py`: `build_customer_intelligence_runner` factory wiring `LLMGateway`, `FirecrawlWebSearchProvider`, `FirecrawlPageRetrievalProvider`, and stage-isolated `ResearchEvidenceLedger(stage=AnalysisStage.CUSTOMER_INTELLIGENCE)`.
-- Created `app/services/customer_intelligence_executor.py`: Stage claim, execution, error mapping (`INVALID_CUSTOMER_INTELLIGENCE_EVIDENCE`, `CUSTOMER_INTELLIGENCE_EXECUTION_ERROR`), and result completion persistence.
-- Added settings to `app/core/config.py`: `customer_intelligence_model: str = "gemini-3.5-flash-lite"`.
+## Day 2 — Intake Engine & AI Interrogation
+- **Status:** COMPLETED & VALIDATED
+- **Key Modules:** Intake clarification flow, dynamic domain interrogation, structured business profile extraction (`IdeaProfile`), profile readiness evaluation (`READY_FOR_ANALYSIS`), chat controller.
 
-### Testing & Validation Results
-- **Targeted Unit Tests**: 19 passed (`tests/unit/research/test_customer_evidence.py`, `tests/unit/crews/customer_intelligence/`, `tests/unit/services/test_customer_intelligence_executor.py`, `tests/unit/llm/test_llm_gateway_customer_schema.py`).
-- **Complete Pytest Suite**: 215 passed in 64.12 seconds (0 failed, 0 errors).
-- **Live Smoke Script**: `scripts/smoke_customer_intelligence.py` executed with live Gemini 3.5 Flash Lite + Firecrawl.
-  - Performance: 185.11s elapsed, 2 web searches, 0 page retrievals, 8 findings, 5 verified sources, MODERATE evidence quality.
-  - All OBSERVED and numerical claims cite canonical ledger evidence.
-  - Zero hallucinated source IDs.
-  - Preserved segment-level findings; zero fabricated persona details or fake PMF proof.
-  - Willingness-to-pay and localized Egypt penetration rate gaps explicitly documented as limitations.
+## Day 3 — Business Analysis Foundation & Stage Infrastructure
+- **Status:** COMPLETED & VALIDATED
+- **Key Modules:** `AnalysisRun`, `AnalysisStageRun`, `AnalysisResult` ORM models, stage claim/complete/fail mechanics in `ResearchStageService`, `BusinessAnalysisFlow` snapshot freezing and stage initialization.
 
-### Known Limitations & Primary Research Gaps
-- Direct willingness-to-pay and pricing sensitivity require primary validation via customer interviews and pricing experiments.
-- Software penetration rates among independent gym operators in Egypt are sparse in public web desk research.
-- Pain intensity and staff adoption friction require direct operational observation/interviews.
+## Day 4 — AI Gateway & Controlled Tool Infrastructure
+- **Status:** COMPLETED & VALIDATED
+- **Key Modules:** `LLMGateway`, `CrewAILLMGatewayAdapter`, `ToolGateway`, `ControlledWebSearchTool`, `ControlledBatchPageRetrievalTool`, `ResearchEvidenceLedger` single-use stage isolation, `FirecrawlWebSearchProvider`, `FirecrawlPageRetrievalProvider`.
+
+## Day 5 — Research Stage Crew AI Implementations & Reliability Hardening
+
+### 1. Market Research Stage
+- **Status:** COMPLETED & VALIDATED
+- **Implementation:** `MarketResearchCrewRunner`, `MarketAnalysisDraft`, `finalize_market_analysis`, `execute_market_research_stage`.
+- **Validation:** Bounded web discovery, evidence-ledger verification, deterministic numerical claim citation enforcement.
+
+### 2. Competitor Intelligence Stage
+- **Status:** COMPLETED & VALIDATED (HARDENED)
+- **Implementation:** `CompetitorIntelligenceCrewRunner` (`max_iter=4`), `CompetitorAnalysisDraft`, `finalize_competitor_analysis`, `execute_competitor_intelligence_stage`.
+- **Hardening Rules:**
+  - Strict prohibition of Product-Market Fit (PMF) phrasing in summaries (`PROHIBITED_PMF_PATTERN`).
+  - Strict blocking of unsupported absence phrasing ("lacks", "does not have", "missing") in weaknesses and findings.
+  - Prohibition of "soft absence" inference (e.g. inferring missing local Egyptian payment support for global competitors when unmentioned; recorded as limitation instead).
+  - Search discovery & page retrieval optimized to retrieve 3-4 distinct competitors in parallel, preventing single-competitor detail hogging and restoring runtime performance.
+  - Unknown pricing represented as `pricing=None`.
+
+### 3. Customer Intelligence Stage
+- **Status:** COMPLETED & VALIDATED (HARDENED)
+- **Implementation:** `CustomerIntelligenceCrewRunner`, `CustomerAnalysisDraft`, `finalize_customer_analysis`, `execute_customer_intelligence_stage`.
+- **Hardening Rules:**
+  - Mandatory search attempt check before finalization (`search_queries` check).
+  - Source quality & directness discipline: direct customer evidence preferred over vendor marketing claims.
+  - Geography match: prohibits silently generalizing global gym-owner behavior to Egypt; requires explicit geographic bounding and `INFERRED` classification or limitation recording.
+  - Mandatory batch page retrieval for decision-critical customer findings.
+  - Strict prohibition of persona fabrication (demographics/names/salaries), fake willingness-to-pay claims, or desk research PMF claims.
+
+---
+
+## Current Backend Test Suite Status
+- **Targeted Unit Tests:** All passed.
+- **Full Backend Pytest Suite:** 215+ unit & integration tests passing cleanly (0 failures, 0 errors).
+
+---
+
+## Current Known Research Limitations
+- **Willingness to Pay:** Public secondary web research cannot establish direct price sensitivity or willingness-to-pay figures for Egyptian independent gym operators; requires primary interviews and pricing experiments.
+- **Localized Penetration Rates:** Exact software penetration rates among independent Egyptian gyms remain unquantified in desk research.
+- **Operational Workflow Friction:** Direct staff adoption resistance and migration friction from paper/spreadsheets require primary validation via interviews and pilot deployments.
+
+---
+
+## Next Immediate Task
+- **Research Join + Evidence Gate** (Cross-stage aggregation, evidence scoring, targeted retry coordination, and strategy preparation).

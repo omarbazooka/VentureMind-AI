@@ -196,8 +196,31 @@ def test_rejects_non_insufficient_analysis_without_sources():
         )
 
 
+def test_rejects_unattempted_research_finalization():
+    ledger = ResearchEvidenceLedger(stage=AnalysisStage.CUSTOMER_INTELLIGENCE)
+
+    draft = CustomerAnalysisDraft(
+        summary="No research was attempted.",
+        findings=[],
+        evidence_quality=ResearchEvidenceQuality.INSUFFICIENT,
+        limitations=["Unattempted research."],
+    )
+
+    with pytest.raises(CustomerEvidenceVerificationError, match="attempt controlled research"):
+        finalize_customer_analysis(
+            draft=draft,
+            evidence_ledger=ledger,
+        )
+
+
 def test_accepts_valid_insufficient_analysis():
     ledger = ResearchEvidenceLedger(stage=AnalysisStage.CUSTOMER_INTELLIGENCE)
+    ledger.record_web_search_result(
+        WebSearchResult(
+            query="gym membership retention Egypt",
+            items=[],
+        )
+    )
 
     draft = CustomerAnalysisDraft(
         summary="No reliable customer evidence was found.",

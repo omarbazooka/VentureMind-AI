@@ -84,6 +84,7 @@ def build_smoke_claim(
 
 
 from app.research.competitor_evidence import (
+    PROHIBITED_PMF_PATTERN,
     UNAVAILABLE_PRICING_PATTERN,
     UNSUPPORTED_ABSENCE_PATTERN,
 )
@@ -129,6 +130,12 @@ def validate_smoke_result(
     result,
     runner,
 ) -> None:
+    if PROHIBITED_PMF_PATTERN.search(result.summary):
+        raise RuntimeError(
+            "Competitor summary contains prohibited PMF phrasing: "
+            f"{result.summary}"
+        )
+
     search_queries = (
         runner.evidence_ledger.search_queries
     )

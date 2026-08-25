@@ -121,6 +121,13 @@ def finalize_customer_analysis(
             "CUSTOMER_INTELLIGENCE evidence ledger"
         )
 
+    if not evidence_ledger.search_queries:
+        raise CustomerEvidenceVerificationError(
+            "Customer intelligence must "
+            "attempt controlled research "
+            "before finalization"
+        )
+
     claimed_source_ids = (
         _collect_claimed_source_ids(
             draft.findings

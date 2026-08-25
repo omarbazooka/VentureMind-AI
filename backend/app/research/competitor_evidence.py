@@ -45,6 +45,17 @@ UNAVAILABLE_PRICING_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+PROHIBITED_PMF_PATTERN = re.compile(
+    r"\b("
+    r"product[- ]market[- ]fit|"
+    r"validated\s+market\s+fit|"
+    r"strong\s+pmf|"
+    r"validated\s+pmf|"
+    r"proven\s+demand\s+for\s+the\s+proposed\s+venture"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 class CompetitorEvidenceVerificationError(
     ResearchEvidenceLedgerError
@@ -232,9 +243,15 @@ def _collect_claimed_source_ids(
 
 def _verify_semantic_rules(
     *,
+    summary: str,
     findings: list[CompetitorFinding],
     competitors: list[CompetitorProfile],
 ) -> None:
+    if PROHIBITED_PMF_PATTERN.search(summary):
+        raise CompetitorEvidenceVerificationError(
+            "Competitor summary must not claim product-market fit or PMF"
+        )
+
     for competitor in competitors:
         if competitor.pricing is not None:
             if UNAVAILABLE_PRICING_PATTERN.search(
@@ -309,6 +326,7 @@ def finalize_competitor_analysis(
         )
 
     _verify_semantic_rules(
+        summary=draft.summary,
         findings=draft.findings,
         competitors=draft.competitors,
     )
