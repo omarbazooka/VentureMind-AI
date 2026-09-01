@@ -1,6 +1,21 @@
 import pytest
 from pydantic import ValidationError
 
+from app.schemas.intake import (
+    ProfileReadinessStatus,
+)
+from app.schemas.research import (
+    ResearchEvidenceGateResult,
+    ResearchGateDecision,
+    ResearchStageGateAssessment,
+)
+from app.schemas.strategy import (
+    BusinessStrategyAnalysis,
+    StrategicClaimKind,
+    StrategicInsight,
+    StrategyStageClaim,
+)
+
 from app.schemas.analysis import AnalysisStage
 from app.schemas.strategy import (
     BusinessStrategyAnalysis,

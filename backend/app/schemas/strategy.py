@@ -1,5 +1,5 @@
 from enum import StrEnum
-
+from uuid import UUID
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -7,8 +7,17 @@ from pydantic import (
     model_validator,
 )
 
-from app.schemas.analysis import AnalysisStage
+from app.schemas.analysis import (
+    AnalysisProfileSnapshot,
+    AnalysisStage,
+)
 
+from app.schemas.research import (
+    CompetitorAnalysis,
+    CustomerAnalysis,
+    MarketAnalysis,
+    ResearchEvidenceGateResult,
+)
 
 RESEARCH_SUPPORT_STAGES = frozenset(
     {
@@ -23,6 +32,86 @@ class StrategicClaimKind(StrEnum):
     PROFILE_FACT = "PROFILE_FACT"
     RESEARCH_INFERENCE = "RESEARCH_INFERENCE"
     AI_ASSUMPTION = "AI_ASSUMPTION"
+
+
+class StrategyStageClaim(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    stage_run_id: UUID
+    analysis_run_id: UUID
+
+    stage: AnalysisStage
+
+    attempt: int = Field(
+        ge=1,
+    )
+
+    profile_snapshot: AnalysisProfileSnapshot
+
+    research_gate: ResearchEvidenceGateResult
+
+    market_analysis: MarketAnalysis | None = None
+
+    competitor_analysis: CompetitorAnalysis | None = None
+
+    customer_analysis: CustomerAnalysis | None = None
+
+    @model_validator(mode="after")
+    def validate_strategy_input(
+        self,
+    ) -> "StrategyStageClaim":
+        if (
+            self.stage
+            != AnalysisStage.BUSINESS_STRATEGY
+        ):
+            raise ValueError(
+                "StrategyStageClaim requires "
+                "BUSINESS_STRATEGY stage"
+            )
+
+        if not self.research_gate.can_proceed:
+            raise ValueError(
+                "Business Strategy cannot start "
+                "before the Research Evidence "
+                "Gate allows progression"
+            )
+
+        result_by_stage = {
+            AnalysisStage.MARKET_RESEARCH: (
+                self.market_analysis
+            ),
+            AnalysisStage.COMPETITOR_INTELLIGENCE: (
+                self.competitor_analysis
+            ),
+            AnalysisStage.CUSTOMER_INTELLIGENCE: (
+                self.customer_analysis
+            ),
+        }
+
+        insufficient_stages = set(
+            self.research_gate
+            .insufficient_stages
+        )
+
+        for (
+            research_stage,
+            result,
+        ) in result_by_stage.items():
+            if (
+                result is None
+                and research_stage
+                not in insufficient_stages
+            ):
+                raise ValueError(
+                    "Strategy input is missing "
+                    "an accepted research result "
+                    "for "
+                    f"{research_stage.value}"
+                )
+
+        return self
 
 
 class StrategicInsight(BaseModel):
