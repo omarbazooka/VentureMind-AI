@@ -6,6 +6,9 @@ from crewai import (
     Process,
     Task,
 )
+from app.services.strategy_grounding import (
+    finalize_business_strategy,
+)
 from crewai.llms.base_llm import BaseLLM
 from pydantic import BaseModel
 
@@ -311,9 +314,14 @@ class BusinessStrategyCrewRunner:
                 "return structured output"
             )
 
-        return (
+        analysis = (
             BusinessStrategyAnalysis
             .model_validate(
                 result.pydantic
             )
+        )
+
+        return finalize_business_strategy(
+            analysis=analysis,
+            claim=claim,
         )

@@ -8,6 +8,16 @@ from crewai.crews.crew_output import (
 )
 from crewai.llms.base_llm import BaseLLM
 
+from app.schemas.strategy import (
+    BusinessStrategyAnalysis,
+    StrategicClaimKind,
+    StrategicInsight,
+    StrategyStageClaim,
+)
+from app.services.strategy_grounding import (
+    StrategyGroundingError,
+)
+
 from app.crews.business_strategy.crew import (
     BusinessStrategyCrewError,
     BusinessStrategyCrewRunner,
@@ -299,6 +309,63 @@ def test_runner_rejects_missing_structured_output(
 
     with pytest.raises(
         BusinessStrategyCrewError
+    ):
+        runner(
+            make_claim()
+        )
+
+
+def test_runner_rejects_ungrounded_strategy(
+    monkeypatch,
+):
+    runner = make_runner()
+
+    invalid_result = (
+        BusinessStrategyAnalysis(
+            executive_summary=(
+                "Strategy summary."
+            ),
+            positioning=[
+                StrategicInsight(
+                    statement=(
+                        "The venture has "
+                        "validated revenue."
+                    ),
+                    claim_kind=(
+                        StrategicClaimKind
+                        .PROFILE_FACT
+                    ),
+                    confidence=1.0,
+                    profile_fields=[
+                        "invented_profile_field"
+                    ],
+                )
+            ],
+            limitations=[
+                "Research remains limited."
+            ],
+        )
+    )
+
+    fake_crew = Mock()
+
+    fake_crew.kickoff.return_value = (
+        CrewOutput(
+            raw="",
+            pydantic=invalid_result,
+        )
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "build_crew",
+        Mock(
+            return_value=fake_crew
+        ),
+    )
+
+    with pytest.raises(
+        StrategyGroundingError
     ):
         runner(
             make_claim()
