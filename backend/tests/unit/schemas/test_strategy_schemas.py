@@ -1,11 +1,17 @@
 import pytest
 from pydantic import ValidationError
 
+from app.schemas.analysis import (
+    AnalysisProfileSnapshot,
+    AnalysisStage,
+    AnalysisStageStatus,
+)
 from app.schemas.intake import (
     ProfileReadinessStatus,
 )
 from app.schemas.research import (
     ResearchEvidenceGateResult,
+    ResearchEvidenceQuality,
     ResearchGateDecision,
     ResearchStageGateAssessment,
 )
@@ -15,14 +21,6 @@ from app.schemas.strategy import (
     StrategicInsight,
     StrategyStageClaim,
 )
-
-from app.schemas.analysis import AnalysisStage
-from app.schemas.strategy import (
-    BusinessStrategyAnalysis,
-    StrategicClaimKind,
-    StrategicInsight,
-)
-
 
 def test_research_inference_accepts_grounded_support():
     insight = StrategicInsight(
@@ -221,4 +219,187 @@ def test_strategy_rejects_unknown_fields():
                 "Strategy summary."
             ),
             invented_field="not allowed",
+        )
+
+
+def make_profile_snapshot() -> AnalysisProfileSnapshot:
+    return AnalysisProfileSnapshot(
+        readiness=(
+            ProfileReadinessStatus
+            .READY_FOR_ANALYSIS
+        ),
+        profile_data={
+            "idea": "Example SaaS venture",
+            "target_geography": "Egypt",
+        },
+    )
+
+
+def make_gate_assessments(
+    *,
+    evidence_quality: ResearchEvidenceQuality,
+) -> list[ResearchStageGateAssessment]:
+    return [
+        ResearchStageGateAssessment(
+            stage=stage,
+            attempt=1,
+            stage_status=(
+                AnalysisStageStatus.COMPLETED
+            ),
+            evidence_quality=evidence_quality,
+        )
+        for stage in (
+            AnalysisStage.MARKET_RESEARCH,
+            AnalysisStage.COMPETITOR_INTELLIGENCE,
+            AnalysisStage.CUSTOMER_INTELLIGENCE,
+        )
+    ]
+
+
+def make_insufficient_gate(
+    *,
+    insufficient_stages: list[AnalysisStage],
+) -> ResearchEvidenceGateResult:
+    return ResearchEvidenceGateResult(
+        decision=(
+            ResearchGateDecision.INSUFFICIENT
+        ),
+        can_proceed=True,
+        assessments=make_gate_assessments(
+            evidence_quality=(
+                ResearchEvidenceQuality
+                .INSUFFICIENT
+            ),
+        ),
+        insufficient_stages=(
+            insufficient_stages
+        ),
+    )
+
+def test_strategy_claim_requires_strategy_stage():
+    with pytest.raises(
+        ValidationError
+    ):
+        StrategyStageClaim(
+            stage_run_id=(
+                "11111111-1111-1111-1111-111111111111"
+            ),
+            analysis_run_id=(
+                "22222222-2222-2222-2222-222222222222"
+            ),
+            stage=(
+                AnalysisStage.MARKET_RESEARCH
+            ),
+            attempt=1,
+            profile_snapshot=(
+                make_profile_snapshot()
+            ),
+            research_gate=(
+                make_insufficient_gate(
+                    insufficient_stages=[
+                        AnalysisStage.MARKET_RESEARCH,
+                        AnalysisStage.COMPETITOR_INTELLIGENCE,
+                        AnalysisStage.CUSTOMER_INTELLIGENCE,
+                    ],
+                )
+            ),
+        )
+
+
+def test_strategy_claim_rejects_blocked_research_gate():
+    gate = ResearchEvidenceGateResult(
+        decision=(
+            ResearchGateDecision.RETRY
+        ),
+        can_proceed=False,
+        assessments=make_gate_assessments(
+            evidence_quality=(
+                ResearchEvidenceQuality.WEAK
+            ),
+        ),
+        retry_stages=[
+            AnalysisStage.MARKET_RESEARCH
+        ],
+    )
+
+    with pytest.raises(
+        ValidationError
+    ):
+        StrategyStageClaim(
+            stage_run_id=(
+                "11111111-1111-1111-1111-111111111111"
+            ),
+            analysis_run_id=(
+                "22222222-2222-2222-2222-222222222222"
+            ),
+            stage=(
+                AnalysisStage.BUSINESS_STRATEGY
+            ),
+            attempt=1,
+            profile_snapshot=(
+                make_profile_snapshot()
+            ),
+            research_gate=gate,
+        )
+
+
+def test_strategy_claim_allows_declared_insufficient_results():
+    gate = make_insufficient_gate(
+        insufficient_stages=[
+            AnalysisStage.MARKET_RESEARCH,
+            AnalysisStage.COMPETITOR_INTELLIGENCE,
+            AnalysisStage.CUSTOMER_INTELLIGENCE,
+        ],
+    )
+
+    claim = StrategyStageClaim(
+        stage_run_id=(
+            "11111111-1111-1111-1111-111111111111"
+        ),
+        analysis_run_id=(
+            "22222222-2222-2222-2222-222222222222"
+        ),
+        stage=(
+            AnalysisStage.BUSINESS_STRATEGY
+        ),
+        attempt=1,
+        profile_snapshot=(
+            make_profile_snapshot()
+        ),
+        research_gate=gate,
+    )
+
+    assert claim.market_analysis is None
+    assert claim.competitor_analysis is None
+    assert claim.customer_analysis is None
+
+
+def test_strategy_claim_rejects_undeclared_missing_result():
+    gate = make_insufficient_gate(
+        insufficient_stages=[
+            AnalysisStage.COMPETITOR_INTELLIGENCE,
+            AnalysisStage.CUSTOMER_INTELLIGENCE,
+        ],
+    )
+
+    with pytest.raises(
+        ValidationError
+    ):
+        StrategyStageClaim(
+            stage_run_id=(
+                "11111111-1111-1111-1111-111111111111"
+            ),
+            analysis_run_id=(
+                "22222222-2222-2222-2222-222222222222"
+            ),
+            stage=(
+                AnalysisStage.BUSINESS_STRATEGY
+            ),
+            attempt=1,
+            profile_snapshot=(
+                make_profile_snapshot()
+            ),
+            research_gate=gate,
+
+            # market_analysis intentionally missing
         )
