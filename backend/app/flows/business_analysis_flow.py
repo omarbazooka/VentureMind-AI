@@ -61,7 +61,14 @@ class BusinessAnalysisSnapshotError(
 @dataclass(frozen=True)
 class BusinessAnalysisResearchStep:
     evaluation: ResearchJoinEvaluation
-    scheduled_retries: list[ScheduledResearchRetry]
+
+    scheduled_retries: list[
+        ScheduledResearchRetry
+    ]
+
+    strategy_stage_run_id: (
+        UUID | None
+    ) = None
 
 
 class BusinessAnalysisFlow:
@@ -244,7 +251,9 @@ class BusinessAnalysisFlow:
         *,
         db: Session,
         run_id: UUID,
-        max_attempts: int = DEFAULT_MAX_RESEARCH_ATTEMPTS,
+        max_attempts: int = (
+            DEFAULT_MAX_RESEARCH_ATTEMPTS
+        ),
     ) -> BusinessAnalysisResearchStep:
         evaluation = inspect_research_join(
             db=db,
@@ -256,6 +265,10 @@ class BusinessAnalysisFlow:
             ScheduledResearchRetry
         ] = []
 
+        strategy_stage_run_id: (
+            UUID | None
+        ) = None
+
         if evaluation.gate.retry_stages:
             scheduled_retries = (
                 schedule_targeted_retries(
@@ -265,7 +278,93 @@ class BusinessAnalysisFlow:
                 )
             )
 
+        elif evaluation.gate.can_proceed:
+            strategy_stage_run = (
+                self
+                ._ensure_business_strategy_stage_run(
+                    db=db,
+                    analysis_run_id=run_id,
+                )
+            )
+
+            strategy_stage_run_id = (
+                strategy_stage_run.id
+            )
+
         return BusinessAnalysisResearchStep(
             evaluation=evaluation,
             scheduled_retries=scheduled_retries,
+            strategy_stage_run_id=(
+                strategy_stage_run_id
+            ),
         )
+
+    def _ensure_business_strategy_stage_run(
+        self,
+        *,
+        db: Session,
+        analysis_run_id: UUID,
+    ) -> AnalysisStageRun:
+        analysis_run = (
+            self._load_run_for_update(
+                db=db,
+                run_id=analysis_run_id,
+            )
+        )
+
+        if (
+            analysis_run.status
+            != AnalysisRunStatus.RUNNING.value
+        ):
+            raise BusinessAnalysisRunStateError(
+                "Business Strategy can only "
+                "be scheduled for a RUNNING "
+                "AnalysisRun"
+            )
+
+        statement = (
+            select(AnalysisStageRun)
+            .where(
+                AnalysisStageRun.analysis_run_id
+                == analysis_run_id,
+                AnalysisStageRun.stage
+                == (
+                    AnalysisStage
+                    .BUSINESS_STRATEGY
+                    .value
+                ),
+                AnalysisStageRun.attempt == 1,
+            )
+        )
+
+        existing_stage_run = db.scalar(
+            statement
+        )
+
+        if existing_stage_run is not None:
+            return existing_stage_run
+
+        strategy_stage_run = (
+            AnalysisStageRun(
+                analysis_run_id=analysis_run_id,
+                stage=(
+                    AnalysisStage
+                    .BUSINESS_STRATEGY
+                    .value
+                ),
+                attempt=1,
+                status=(
+                    AnalysisStageStatus
+                    .PENDING
+                    .value
+                ),
+            )
+        )
+
+        db.add(
+            strategy_stage_run
+        )
+
+        db.flush()
+
+        return strategy_stage_run
