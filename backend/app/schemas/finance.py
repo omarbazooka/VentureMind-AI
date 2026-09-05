@@ -572,3 +572,168 @@ class FinanceReadinessResult(BaseModel):
             )
 
         return self
+
+
+class FinancialScenarioInputs(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    base: FinancialAssumptionSet
+    upside: FinancialAssumptionSet
+    downside: FinancialAssumptionSet
+
+    @model_validator(mode="after")
+    def validate_scenario_roles(
+        self,
+    ) -> "FinancialScenarioInputs":
+        if (
+            self.base.scenario
+            != FinancialScenarioKind.BASE
+        ):
+            raise ValueError(
+                "base assumptions must use "
+                "the BASE scenario"
+            )
+
+        if (
+            self.upside.scenario
+            != FinancialScenarioKind.UPSIDE
+        ):
+            raise ValueError(
+                "upside assumptions must use "
+                "the UPSIDE scenario"
+            )
+
+        if (
+            self.downside.scenario
+            != FinancialScenarioKind.DOWNSIDE
+        ):
+            raise ValueError(
+                "downside assumptions must use "
+                "the DOWNSIDE scenario"
+            )
+
+        return self
+
+
+class FinancialScenarioMetricComparison(
+    BaseModel
+):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    metric_name: FinancialMetricName
+
+    base_value: Decimal | None = None
+    upside_value: Decimal | None = None
+    downside_value: Decimal | None = None
+
+    upside_delta_from_base: (
+        Decimal | None
+    ) = None
+
+    downside_delta_from_base: (
+        Decimal | None
+    ) = None
+
+    currency: str | None = None
+
+    unit: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+    period: FinancialPeriod | None = None
+
+    provenance: Literal[
+        "CALCULATED"
+    ] = "CALCULATED"
+
+    @model_validator(mode="after")
+    def validate_deltas(
+        self,
+    ) -> (
+        "FinancialScenarioMetricComparison"
+    ):
+        if (
+            self.base_value is None
+            or self.upside_value is None
+        ):
+            if (
+                self.upside_delta_from_base
+                is not None
+            ):
+                raise ValueError(
+                    "Upside delta requires "
+                    "both base and upside values"
+                )
+
+        if (
+            self.base_value is None
+            or self.downside_value is None
+        ):
+            if (
+                self.downside_delta_from_base
+                is not None
+            ):
+                raise ValueError(
+                    "Downside delta requires "
+                    "both base and downside values"
+                )
+
+        return self
+
+
+class FinancialScenarioBundle(
+    BaseModel
+):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    base: FinancialScenarioResult
+    upside: FinancialScenarioResult
+    downside: FinancialScenarioResult
+
+    comparisons: list[
+        FinancialScenarioMetricComparison
+    ] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+
+    limitations: list[str] = Field(
+        default_factory=list,
+        max_length=30,
+    )
+
+    @model_validator(mode="after")
+    def validate_result_roles(
+        self,
+    ) -> "FinancialScenarioBundle":
+        expected = (
+            (
+                self.base,
+                FinancialScenarioKind.BASE,
+            ),
+            (
+                self.upside,
+                FinancialScenarioKind.UPSIDE,
+            ),
+            (
+                self.downside,
+                FinancialScenarioKind.DOWNSIDE,
+            ),
+        )
+
+        for result, scenario in expected:
+            if result.scenario != scenario:
+                raise ValueError(
+                    "Financial scenario result "
+                    "does not match its bundle "
+                    "position"
+                )
+
+        return self
