@@ -15,22 +15,16 @@ from app.schemas.analysis import (
 )
 
 
-FINANCE_RESEARCH_SUPPORT_STAGES = (
-    frozenset(
-        {
-            AnalysisStage.MARKET_RESEARCH,
-            AnalysisStage
-            .COMPETITOR_INTELLIGENCE,
-            AnalysisStage
-            .CUSTOMER_INTELLIGENCE,
-        }
-    )
+FINANCE_RESEARCH_SUPPORT_STAGES = frozenset(
+    {
+        AnalysisStage.MARKET_RESEARCH,
+        AnalysisStage.COMPETITOR_INTELLIGENCE,
+        AnalysisStage.CUSTOMER_INTELLIGENCE,
+    }
 )
 
 
-class FinancialAssumptionProvenance(
-    StrEnum
-):
+class FinancialAssumptionProvenance(StrEnum):
     USER = "USER"
     WEB = "WEB"
     AI_ASSUMPTION = "AI_ASSUMPTION"
@@ -48,98 +42,69 @@ class FinancialScenarioKind(StrEnum):
 
 
 class FinancialInputName(StrEnum):
-    SELLING_PRICE_PER_UNIT = (
-        "SELLING_PRICE_PER_UNIT"
-    )
-
+    SELLING_PRICE_PER_UNIT = "SELLING_PRICE_PER_UNIT"
     SALES_VOLUME = "SALES_VOLUME"
-
-    VARIABLE_COST_PER_UNIT = (
-        "VARIABLE_COST_PER_UNIT"
-    )
-
+    VARIABLE_COST_PER_UNIT = "VARIABLE_COST_PER_UNIT"
     FIXED_COSTS = "FIXED_COSTS"
-
     STARTING_CASH = "STARTING_CASH"
 
 
 MONETARY_INPUTS = frozenset(
     {
-        FinancialInputName
-        .SELLING_PRICE_PER_UNIT,
-
-        FinancialInputName
-        .VARIABLE_COST_PER_UNIT,
-
+        FinancialInputName.SELLING_PRICE_PER_UNIT,
+        FinancialInputName.VARIABLE_COST_PER_UNIT,
         FinancialInputName.FIXED_COSTS,
-
         FinancialInputName.STARTING_CASH,
     }
 )
 
-
 UNIT_BASED_INPUTS = frozenset(
     {
-        FinancialInputName
-        .SELLING_PRICE_PER_UNIT,
-
+        FinancialInputName.SELLING_PRICE_PER_UNIT,
         FinancialInputName.SALES_VOLUME,
+        FinancialInputName.VARIABLE_COST_PER_UNIT,
+    }
+)
 
-        FinancialInputName
-        .VARIABLE_COST_PER_UNIT,
+PERIOD_BASED_INPUTS = frozenset(
+    {
+        FinancialInputName.SALES_VOLUME,
+        FinancialInputName.FIXED_COSTS,
     }
 )
 
 
 class FinancialAssumption(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
+    model_config = ConfigDict(extra="forbid")
 
     input_name: FinancialInputName
-
     value: Decimal | None = Field(
         default=None,
         ge=Decimal("0"),
     )
-
-    provenance: (
-        FinancialAssumptionProvenance
-        | None
-    ) = None
-
+    provenance: FinancialAssumptionProvenance | None = None
     currency: str | None = None
-
     unit_label: str | None = Field(
         default=None,
         min_length=1,
         max_length=100,
     )
-
     period: FinancialPeriod | None = None
-
     rationale: str = Field(
         min_length=1,
         max_length=2000,
     )
-
     profile_fields: list[str] = Field(
         default_factory=list,
         max_length=20,
     )
-
-    supporting_stages: list[
-        AnalysisStage
-    ] = Field(
+    supporting_stages: list[AnalysisStage] = Field(
         default_factory=list,
         max_length=3,
     )
-
-    evidence_source_ids: list[str] = (
-        Field(
-            default_factory=list,
-            max_length=20,
-        )
+    evidence_source_ids: list[str] = Field(
+        default_factory=list,
+        max_length=20,
     )
 
     @field_validator("currency")
@@ -188,53 +153,40 @@ class FinancialAssumption(BaseModel):
                 "cannot declare provenance"
             )
 
-        if (
-            self.input_name
-            in MONETARY_INPUTS
-        ):
+        if self.input_name in MONETARY_INPUTS:
             if self.currency is None:
                 raise ValueError(
                     "Monetary financial "
                     "inputs require currency"
                 )
-
         elif self.currency is not None:
             raise ValueError(
                 "Non-monetary financial "
-                "inputs cannot declare "
-                "currency"
+                "inputs cannot declare currency"
             )
 
-        if (
-            self.input_name
-            in UNIT_BASED_INPUTS
-            and not self.unit_label
-        ):
+        if self.input_name in UNIT_BASED_INPUTS:
+            if not self.unit_label:
+                raise ValueError(
+                    "Unit-based financial "
+                    "inputs require unit_label"
+                )
+        elif self.unit_label is not None:
             raise ValueError(
-                "Unit-based financial "
-                "inputs require unit_label"
+                "This financial input "
+                "cannot declare unit_label"
             )
 
-        if (
-            self.input_name
-            == FinancialInputName
-            .SALES_VOLUME
-            and self.period is None
-        ):
+        if self.input_name in PERIOD_BASED_INPUTS:
+            if self.period is None:
+                raise ValueError(
+                    "This financial input "
+                    "requires a period"
+                )
+        elif self.period is not None:
             raise ValueError(
-                "Sales volume requires "
-                "a financial period"
-            )
-
-        if (
-            self.input_name
-            == FinancialInputName
-            .FIXED_COSTS
-            and self.period is None
-        ):
-            raise ValueError(
-                "Fixed costs require "
-                "a financial period"
+                "This financial input "
+                "cannot declare a period"
             )
 
         invalid_stages = (
@@ -264,8 +216,7 @@ class FinancialAssumption(BaseModel):
 
         if (
             self.provenance
-            == FinancialAssumptionProvenance
-            .USER
+            == FinancialAssumptionProvenance.USER
         ):
             if not self.profile_fields:
                 raise ValueError(
@@ -286,8 +237,7 @@ class FinancialAssumption(BaseModel):
 
         elif (
             self.provenance
-            == FinancialAssumptionProvenance
-            .WEB
+            == FinancialAssumptionProvenance.WEB
         ):
             if (
                 not self.supporting_stages
@@ -309,8 +259,7 @@ class FinancialAssumption(BaseModel):
 
         elif (
             self.provenance
-            == FinancialAssumptionProvenance
-            .AI_ASSUMPTION
+            == FinancialAssumptionProvenance.AI_ASSUMPTION
         ):
             if (
                 self.profile_fields
@@ -326,29 +275,15 @@ class FinancialAssumption(BaseModel):
         return self
 
 
-
 class FinancialAssumptionSet(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
+    model_config = ConfigDict(extra="forbid")
 
     scenario: FinancialScenarioKind
-
-    selling_price_per_unit: (
-        FinancialAssumption
-    )
-
+    selling_price_per_unit: FinancialAssumption
     sales_volume: FinancialAssumption
-
-    variable_cost_per_unit: (
-        FinancialAssumption
-    )
-
+    variable_cost_per_unit: FinancialAssumption
     fixed_costs: FinancialAssumption
-
-    starting_cash: (
-        FinancialAssumption | None
-    ) = None
+    starting_cash: FinancialAssumption | None = None
 
     @model_validator(mode="after")
     def validate_input_slots(
@@ -356,36 +291,19 @@ class FinancialAssumptionSet(BaseModel):
     ) -> "FinancialAssumptionSet":
         expected_inputs = {
             "selling_price_per_unit": (
-                FinancialInputName
-                .SELLING_PRICE_PER_UNIT
+                FinancialInputName.SELLING_PRICE_PER_UNIT
             ),
-            "sales_volume": (
-                FinancialInputName
-                .SALES_VOLUME
-            ),
+            "sales_volume": FinancialInputName.SALES_VOLUME,
             "variable_cost_per_unit": (
-                FinancialInputName
-                .VARIABLE_COST_PER_UNIT
+                FinancialInputName.VARIABLE_COST_PER_UNIT
             ),
-            "fixed_costs": (
-                FinancialInputName
-                .FIXED_COSTS
-            ),
+            "fixed_costs": FinancialInputName.FIXED_COSTS,
         }
 
-        for (
-            field_name,
-            expected_name,
-        ) in expected_inputs.items():
-            assumption = getattr(
-                self,
-                field_name,
-            )
+        for field_name, expected_name in expected_inputs.items():
+            assumption = getattr(self, field_name)
 
-            if (
-                assumption.input_name
-                != expected_name
-            ):
+            if assumption.input_name != expected_name:
                 raise ValueError(
                     f"{field_name} must use "
                     f"{expected_name.value}"
@@ -393,11 +311,8 @@ class FinancialAssumptionSet(BaseModel):
 
         if (
             self.starting_cash is not None
-            and (
-                self.starting_cash.input_name
-                != FinancialInputName
-                .STARTING_CASH
-            )
+            and self.starting_cash.input_name
+            != FinancialInputName.STARTING_CASH
         ):
             raise ValueError(
                 "starting_cash must use "
@@ -406,91 +321,57 @@ class FinancialAssumptionSet(BaseModel):
 
         return self
 
+
 class FinancialMetricName(StrEnum):
     REVENUE = "REVENUE"
-
-    VARIABLE_COSTS = (
-        "VARIABLE_COSTS"
-    )
-
-    CONTRIBUTION_PROFIT = (
-        "CONTRIBUTION_PROFIT"
-    )
-
+    VARIABLE_COSTS = "VARIABLE_COSTS"
+    CONTRIBUTION_PROFIT = "CONTRIBUTION_PROFIT"
     CONTRIBUTION_MARGIN_PERCENT = (
         "CONTRIBUTION_MARGIN_PERCENT"
     )
-
-    OPERATING_RESULT = (
-        "OPERATING_RESULT"
-    )
-
-    BREAK_EVEN_UNITS = (
-        "BREAK_EVEN_UNITS"
-    )
-
-    RUNWAY_PERIODS = (
-        "RUNWAY_PERIODS"
-    )
+    OPERATING_RESULT = "OPERATING_RESULT"
+    BREAK_EVEN_UNITS = "BREAK_EVEN_UNITS"
+    RUNWAY_PERIODS = "RUNWAY_PERIODS"
 
 
 MONETARY_METRICS = frozenset(
     {
         FinancialMetricName.REVENUE,
-        FinancialMetricName
-        .VARIABLE_COSTS,
-        FinancialMetricName
-        .CONTRIBUTION_PROFIT,
-        FinancialMetricName
-        .OPERATING_RESULT,
+        FinancialMetricName.VARIABLE_COSTS,
+        FinancialMetricName.CONTRIBUTION_PROFIT,
+        FinancialMetricName.OPERATING_RESULT,
     }
 )
-
 
 PERIOD_BASED_METRICS = (
     MONETARY_METRICS
     | frozenset(
         {
-            FinancialMetricName
-            .BREAK_EVEN_UNITS,
+            FinancialMetricName.BREAK_EVEN_UNITS,
         }
     )
 )
 
-class CalculatedFinancialMetric(
-    BaseModel
-):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
+
+class CalculatedFinancialMetric(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
     metric_name: FinancialMetricName
-
     value: Decimal
-
     currency: str | None = None
-
     unit: str = Field(
         min_length=1,
         max_length=100,
     )
-
     formula: str = Field(
         min_length=1,
         max_length=1000,
     )
-
-    input_names: list[
-        FinancialInputName
-    ] = Field(
+    input_names: list[FinancialInputName] = Field(
         min_length=1,
         max_length=10,
     )
-
-    provenance: Literal[
-        "CALCULATED"
-    ] = "CALCULATED"
-
+    provenance: Literal["CALCULATED"] = "CALCULATED"
     period: FinancialPeriod | None = None
 
     @field_validator("currency")
@@ -520,8 +401,7 @@ class CalculatedFinancialMetric(
         self,
     ) -> "CalculatedFinancialMetric":
         if (
-            self.metric_name
-            in MONETARY_METRICS
+            self.metric_name in MONETARY_METRICS
             and self.currency is None
         ):
             raise ValueError(
@@ -530,8 +410,7 @@ class CalculatedFinancialMetric(
             )
 
         if (
-            self.metric_name
-            not in MONETARY_METRICS
+            self.metric_name not in MONETARY_METRICS
             and self.currency is not None
         ):
             raise ValueError(
@@ -541,8 +420,7 @@ class CalculatedFinancialMetric(
             )
 
         if (
-            self.metric_name
-            in PERIOD_BASED_METRICS
+            self.metric_name in PERIOD_BASED_METRICS
             and self.period is None
         ):
             raise ValueError(
@@ -551,8 +429,7 @@ class CalculatedFinancialMetric(
             )
 
         if (
-            self.metric_name
-            not in PERIOD_BASED_METRICS
+            self.metric_name not in PERIOD_BASED_METRICS
             and self.period is not None
         ):
             raise ValueError(
@@ -562,29 +439,20 @@ class CalculatedFinancialMetric(
 
         return self
 
+
 class FinancialScenarioResult(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
+    model_config = ConfigDict(extra="forbid")
 
     scenario: FinancialScenarioKind
-
     assumptions: FinancialAssumptionSet
-
-    metrics: list[
-        CalculatedFinancialMetric
-    ] = Field(
+    metrics: list[CalculatedFinancialMetric] = Field(
         default_factory=list,
         max_length=20,
     )
-
-    missing_critical_inputs: list[
-        FinancialInputName
-    ] = Field(
+    missing_critical_inputs: list[FinancialInputName] = Field(
         default_factory=list,
         max_length=10,
     )
-
     limitations: list[str] = Field(
         default_factory=list,
         max_length=20,
@@ -594,10 +462,7 @@ class FinancialScenarioResult(BaseModel):
     def validate_scenario(
         self,
     ) -> "FinancialScenarioResult":
-        if (
-            self.scenario
-            != self.assumptions.scenario
-        ):
+        if self.scenario != self.assumptions.scenario:
             raise ValueError(
                 "Scenario result and "
                 "assumption set must match"
@@ -608,10 +473,7 @@ class FinancialScenarioResult(BaseModel):
             for metric in self.metrics
         ]
 
-        if (
-            len(metric_names)
-            != len(set(metric_names))
-        ):
+        if len(metric_names) != len(set(metric_names)):
             raise ValueError(
                 "Financial scenario cannot "
                 "contain duplicate metrics"
@@ -619,76 +481,40 @@ class FinancialScenarioResult(BaseModel):
 
         return self
 
-class FinanceReadinessStatus(
-    StrEnum
-):
-    READY_FOR_CALCULATION = (
-        "READY_FOR_CALCULATION"
-    )
 
-    MISSING_CRITICAL_INPUTS = (
-        "MISSING_CRITICAL_INPUTS"
-    )
-
-    INCOMPATIBLE_INPUTS = (
-        "INCOMPATIBLE_INPUTS"
-    )
+class FinanceReadinessStatus(StrEnum):
+    READY_FOR_CALCULATION = "READY_FOR_CALCULATION"
+    MISSING_CRITICAL_INPUTS = "MISSING_CRITICAL_INPUTS"
+    INCOMPATIBLE_INPUTS = "INCOMPATIBLE_INPUTS"
 
 
-class FinanceReadinessIssueCode(
-    StrEnum
-):
-    CORE_CURRENCY_MISMATCH = (
-        "CORE_CURRENCY_MISMATCH"
-    )
-
-    CORE_UNIT_MISMATCH = (
-        "CORE_UNIT_MISMATCH"
-    )
-
-    STARTING_CASH_MISSING = (
-        "STARTING_CASH_MISSING"
-    )
-
+class FinanceReadinessIssueCode(StrEnum):
+    CORE_CURRENCY_MISMATCH = "CORE_CURRENCY_MISMATCH"
+    CORE_UNIT_MISMATCH = "CORE_UNIT_MISMATCH"
+    STARTING_CASH_MISSING = "STARTING_CASH_MISSING"
     STARTING_CASH_CURRENCY_MISMATCH = (
         "STARTING_CASH_CURRENCY_MISMATCH"
     )
 
 
-class FinanceReadinessResult(
-    BaseModel
-):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
+class FinanceReadinessResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
     scenario: FinancialScenarioKind
-
     status: FinanceReadinessStatus
-
     can_calculate_core: bool
-
-    missing_critical_inputs: list[
-        FinancialInputName
-    ] = Field(
+    missing_critical_inputs: list[FinancialInputName] = Field(
         default_factory=list,
         max_length=10,
     )
-
-    blocking_issues: list[
-        FinanceReadinessIssueCode
-    ] = Field(
+    blocking_issues: list[FinanceReadinessIssueCode] = Field(
         default_factory=list,
         max_length=10,
     )
-
-    optional_issues: list[
-        FinanceReadinessIssueCode
-    ] = Field(
+    optional_issues: list[FinanceReadinessIssueCode] = Field(
         default_factory=list,
         max_length=10,
     )
-
     runway_input_ready: bool = False
 
     @model_validator(mode="after")
@@ -697,20 +523,17 @@ class FinanceReadinessResult(
     ) -> "FinanceReadinessResult":
         if (
             self.status
-            == FinanceReadinessStatus
-            .READY_FOR_CALCULATION
+            == FinanceReadinessStatus.READY_FOR_CALCULATION
             and not self.can_calculate_core
         ):
             raise ValueError(
-                "READY_FOR_CALCULATION "
-                "requires "
+                "READY_FOR_CALCULATION requires "
                 "can_calculate_core=True"
             )
 
         if (
             self.status
-            != FinanceReadinessStatus
-            .READY_FOR_CALCULATION
+            != FinanceReadinessStatus.READY_FOR_CALCULATION
             and self.can_calculate_core
         ):
             raise ValueError(
@@ -720,22 +543,17 @@ class FinanceReadinessResult(
 
         if (
             self.status
-            == FinanceReadinessStatus
-            .MISSING_CRITICAL_INPUTS
-            and not (
-                self.missing_critical_inputs
-            )
+            == FinanceReadinessStatus.MISSING_CRITICAL_INPUTS
+            and not self.missing_critical_inputs
         ):
             raise ValueError(
                 "MISSING_CRITICAL_INPUTS "
-                "requires explicit missing "
-                "inputs"
+                "requires explicit missing inputs"
             )
 
         if (
             self.status
-            == FinanceReadinessStatus
-            .INCOMPATIBLE_INPUTS
+            == FinanceReadinessStatus.INCOMPATIBLE_INPUTS
             and not self.blocking_issues
         ):
             raise ValueError(
