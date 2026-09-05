@@ -10,9 +10,7 @@ from pydantic import (
     model_validator,
 )
 
-from app.schemas.analysis import (
-    AnalysisStage,
-)
+from app.schemas.analysis import AnalysisStage
 
 
 FINANCE_RESEARCH_SUPPORT_STAGES = frozenset(
@@ -117,16 +115,13 @@ class FinancialAssumption(BaseModel):
             return None
 
         normalized = value.strip().upper()
-
         if (
             len(normalized) != 3
             or not normalized.isalpha()
         ):
             raise ValueError(
-                "currency must be a "
-                "3-letter code"
+                "currency must be a 3-letter code"
             )
-
         return normalized
 
     @model_validator(mode="after")
@@ -135,69 +130,53 @@ class FinancialAssumption(BaseModel):
     ) -> "FinancialAssumption":
         has_value = self.value is not None
 
-        if (
-            has_value
-            and self.provenance is None
-        ):
+        if has_value and self.provenance is None:
             raise ValueError(
-                "Known financial values "
-                "must declare provenance"
+                "Known financial values must declare provenance"
             )
 
-        if (
-            not has_value
-            and self.provenance is not None
-        ):
+        if not has_value and self.provenance is not None:
             raise ValueError(
-                "Unknown financial values "
-                "cannot declare provenance"
+                "Unknown financial values cannot declare provenance"
             )
 
         if self.input_name in MONETARY_INPUTS:
-            if self.currency is None:
+            if has_value and self.currency is None:
                 raise ValueError(
-                    "Monetary financial "
-                    "inputs require currency"
+                    "Known monetary financial inputs require currency"
                 )
         elif self.currency is not None:
             raise ValueError(
-                "Non-monetary financial "
-                "inputs cannot declare currency"
+                "Non-monetary financial inputs cannot declare currency"
             )
 
         if self.input_name in UNIT_BASED_INPUTS:
-            if not self.unit_label:
+            if has_value and not self.unit_label:
                 raise ValueError(
-                    "Unit-based financial "
-                    "inputs require unit_label"
+                    "Known unit-based financial inputs require unit_label"
                 )
         elif self.unit_label is not None:
             raise ValueError(
-                "This financial input "
-                "cannot declare unit_label"
+                "This financial input cannot declare unit_label"
             )
 
         if self.input_name in PERIOD_BASED_INPUTS:
-            if self.period is None:
+            if has_value and self.period is None:
                 raise ValueError(
-                    "This financial input "
-                    "requires a period"
+                    "Known period-based financial inputs require a period"
                 )
         elif self.period is not None:
             raise ValueError(
-                "This financial input "
-                "cannot declare a period"
+                "This financial input cannot declare a period"
             )
 
         invalid_stages = (
             set(self.supporting_stages)
             - FINANCE_RESEARCH_SUPPORT_STAGES
         )
-
         if invalid_stages:
             raise ValueError(
-                "Financial assumptions may "
-                "only reference research "
+                "Financial assumptions may only reference research "
                 "stages as supporting stages"
             )
 
@@ -208,53 +187,33 @@ class FinancialAssumption(BaseModel):
                 or self.evidence_source_ids
             ):
                 raise ValueError(
-                    "Unknown financial values "
-                    "cannot claim source lineage"
+                    "Unknown financial values cannot claim source lineage"
                 )
-
             return self
 
-        if (
-            self.provenance
-            == FinancialAssumptionProvenance.USER
-        ):
+        if self.provenance == FinancialAssumptionProvenance.USER:
             if not self.profile_fields:
                 raise ValueError(
-                    "USER financial values "
-                    "must reference at least "
+                    "USER financial values must reference at least "
                     "one IdeaProfile field"
                 )
-
-            if (
-                self.supporting_stages
-                or self.evidence_source_ids
-            ):
+            if self.supporting_stages or self.evidence_source_ids:
                 raise ValueError(
-                    "USER financial values "
-                    "cannot claim research "
-                    "provenance"
+                    "USER financial values cannot claim research provenance"
                 )
 
-        elif (
-            self.provenance
-            == FinancialAssumptionProvenance.WEB
-        ):
+        elif self.provenance == FinancialAssumptionProvenance.WEB:
             if (
                 not self.supporting_stages
                 or not self.evidence_source_ids
             ):
                 raise ValueError(
-                    "WEB financial values "
-                    "must reference research "
-                    "stages and evidence "
-                    "source IDs"
+                    "WEB financial values must reference research "
+                    "stages and evidence source IDs"
                 )
-
             if self.profile_fields:
                 raise ValueError(
-                    "WEB financial values "
-                    "cannot claim IdeaProfile "
-                    "provenance"
+                    "WEB financial values cannot claim IdeaProfile provenance"
                 )
 
         elif (
@@ -267,9 +226,7 @@ class FinancialAssumption(BaseModel):
                 or self.evidence_source_ids
             ):
                 raise ValueError(
-                    "AI_ASSUMPTION values "
-                    "must remain explicitly "
-                    "unverified"
+                    "AI_ASSUMPTION values must remain explicitly unverified"
                 )
 
         return self
@@ -302,11 +259,9 @@ class FinancialAssumptionSet(BaseModel):
 
         for field_name, expected_name in expected_inputs.items():
             assumption = getattr(self, field_name)
-
             if assumption.input_name != expected_name:
                 raise ValueError(
-                    f"{field_name} must use "
-                    f"{expected_name.value}"
+                    f"{field_name} must use {expected_name.value}"
                 )
 
         if (
@@ -315,8 +270,7 @@ class FinancialAssumptionSet(BaseModel):
             != FinancialInputName.STARTING_CASH
         ):
             raise ValueError(
-                "starting_cash must use "
-                "STARTING_CASH"
+                "starting_cash must use STARTING_CASH"
             )
 
         return self
@@ -326,9 +280,7 @@ class FinancialMetricName(StrEnum):
     REVENUE = "REVENUE"
     VARIABLE_COSTS = "VARIABLE_COSTS"
     CONTRIBUTION_PROFIT = "CONTRIBUTION_PROFIT"
-    CONTRIBUTION_MARGIN_PERCENT = (
-        "CONTRIBUTION_MARGIN_PERCENT"
-    )
+    CONTRIBUTION_MARGIN_PERCENT = "CONTRIBUTION_MARGIN_PERCENT"
     OPERATING_RESULT = "OPERATING_RESULT"
     BREAK_EVEN_UNITS = "BREAK_EVEN_UNITS"
     RUNWAY_PERIODS = "RUNWAY_PERIODS"
@@ -384,16 +336,13 @@ class CalculatedFinancialMetric(BaseModel):
             return None
 
         normalized = value.strip().upper()
-
         if (
             len(normalized) != 3
             or not normalized.isalpha()
         ):
             raise ValueError(
-                "currency must be a "
-                "3-letter code"
+                "currency must be a 3-letter code"
             )
-
         return normalized
 
     @model_validator(mode="after")
@@ -405,8 +354,7 @@ class CalculatedFinancialMetric(BaseModel):
             and self.currency is None
         ):
             raise ValueError(
-                "Monetary calculated "
-                "metrics require currency"
+                "Monetary calculated metrics require currency"
             )
 
         if (
@@ -414,9 +362,7 @@ class CalculatedFinancialMetric(BaseModel):
             and self.currency is not None
         ):
             raise ValueError(
-                "Non-monetary calculated "
-                "metrics cannot declare "
-                "currency"
+                "Non-monetary calculated metrics cannot declare currency"
             )
 
         if (
@@ -424,8 +370,7 @@ class CalculatedFinancialMetric(BaseModel):
             and self.period is None
         ):
             raise ValueError(
-                "Period-based financial "
-                "metrics require a period"
+                "Period-based financial metrics require a period"
             )
 
         if (
@@ -433,8 +378,7 @@ class CalculatedFinancialMetric(BaseModel):
             and self.period is not None
         ):
             raise ValueError(
-                "This financial metric "
-                "cannot declare a period"
+                "This financial metric cannot declare a period"
             )
 
         return self
@@ -464,19 +408,16 @@ class FinancialScenarioResult(BaseModel):
     ) -> "FinancialScenarioResult":
         if self.scenario != self.assumptions.scenario:
             raise ValueError(
-                "Scenario result and "
-                "assumption set must match"
+                "Scenario result and assumption set must match"
             )
 
         metric_names = [
             metric.metric_name
             for metric in self.metrics
         ]
-
         if len(metric_names) != len(set(metric_names)):
             raise ValueError(
-                "Financial scenario cannot "
-                "contain duplicate metrics"
+                "Financial scenario cannot contain duplicate metrics"
             )
 
         return self
@@ -527,8 +468,7 @@ class FinanceReadinessResult(BaseModel):
             and not self.can_calculate_core
         ):
             raise ValueError(
-                "READY_FOR_CALCULATION requires "
-                "can_calculate_core=True"
+                "READY_FOR_CALCULATION requires can_calculate_core=True"
             )
 
         if (
@@ -537,8 +477,7 @@ class FinanceReadinessResult(BaseModel):
             and self.can_calculate_core
         ):
             raise ValueError(
-                "Non-ready Finance status "
-                "cannot allow core calculation"
+                "Non-ready Finance status cannot allow core calculation"
             )
 
         if (
@@ -547,8 +486,7 @@ class FinanceReadinessResult(BaseModel):
             and not self.missing_critical_inputs
         ):
             raise ValueError(
-                "MISSING_CRITICAL_INPUTS "
-                "requires explicit missing inputs"
+                "MISSING_CRITICAL_INPUTS requires explicit missing inputs"
             )
 
         if (
@@ -557,8 +495,7 @@ class FinanceReadinessResult(BaseModel):
             and not self.blocking_issues
         ):
             raise ValueError(
-                "INCOMPATIBLE_INPUTS "
-                "requires blocking issues"
+                "INCOMPATIBLE_INPUTS requires blocking issues"
             )
 
         if (
@@ -566,18 +503,14 @@ class FinanceReadinessResult(BaseModel):
             and not self.can_calculate_core
         ):
             raise ValueError(
-                "Runway inputs cannot be "
-                "ready while core Finance "
-                "is not ready"
+                "Runway inputs cannot be ready while core Finance is not ready"
             )
 
         return self
 
 
 class FinancialScenarioInputs(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
+    model_config = ConfigDict(extra="forbid")
 
     base: FinancialAssumptionSet
     upside: FinancialAssumptionSet
@@ -587,123 +520,71 @@ class FinancialScenarioInputs(BaseModel):
     def validate_scenario_roles(
         self,
     ) -> "FinancialScenarioInputs":
-        if (
-            self.base.scenario
-            != FinancialScenarioKind.BASE
-        ):
+        if self.base.scenario != FinancialScenarioKind.BASE:
             raise ValueError(
-                "base assumptions must use "
-                "the BASE scenario"
+                "base assumptions must use the BASE scenario"
             )
-
-        if (
-            self.upside.scenario
-            != FinancialScenarioKind.UPSIDE
-        ):
+        if self.upside.scenario != FinancialScenarioKind.UPSIDE:
             raise ValueError(
-                "upside assumptions must use "
-                "the UPSIDE scenario"
+                "upside assumptions must use the UPSIDE scenario"
             )
-
-        if (
-            self.downside.scenario
-            != FinancialScenarioKind.DOWNSIDE
-        ):
+        if self.downside.scenario != FinancialScenarioKind.DOWNSIDE:
             raise ValueError(
-                "downside assumptions must use "
-                "the DOWNSIDE scenario"
+                "downside assumptions must use the DOWNSIDE scenario"
             )
-
         return self
 
 
-class FinancialScenarioMetricComparison(
-    BaseModel
-):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
+class FinancialScenarioMetricComparison(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
     metric_name: FinancialMetricName
-
     base_value: Decimal | None = None
     upside_value: Decimal | None = None
     downside_value: Decimal | None = None
-
-    upside_delta_from_base: (
-        Decimal | None
-    ) = None
-
-    downside_delta_from_base: (
-        Decimal | None
-    ) = None
-
+    upside_delta_from_base: Decimal | None = None
+    downside_delta_from_base: Decimal | None = None
     currency: str | None = None
-
     unit: str = Field(
         min_length=1,
         max_length=100,
     )
-
     period: FinancialPeriod | None = None
-
-    provenance: Literal[
-        "CALCULATED"
-    ] = "CALCULATED"
+    provenance: Literal["CALCULATED"] = "CALCULATED"
 
     @model_validator(mode="after")
     def validate_deltas(
         self,
-    ) -> (
-        "FinancialScenarioMetricComparison"
-    ):
+    ) -> "FinancialScenarioMetricComparison":
         if (
             self.base_value is None
             or self.upside_value is None
-        ):
-            if (
-                self.upside_delta_from_base
-                is not None
-            ):
-                raise ValueError(
-                    "Upside delta requires "
-                    "both base and upside values"
-                )
+        ) and self.upside_delta_from_base is not None:
+            raise ValueError(
+                "Upside delta requires both base and upside values"
+            )
 
         if (
             self.base_value is None
             or self.downside_value is None
-        ):
-            if (
-                self.downside_delta_from_base
-                is not None
-            ):
-                raise ValueError(
-                    "Downside delta requires "
-                    "both base and downside values"
-                )
+        ) and self.downside_delta_from_base is not None:
+            raise ValueError(
+                "Downside delta requires both base and downside values"
+            )
 
         return self
 
 
-class FinancialScenarioBundle(
-    BaseModel
-):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
+class FinancialScenarioBundle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
     base: FinancialScenarioResult
     upside: FinancialScenarioResult
     downside: FinancialScenarioResult
-
-    comparisons: list[
-        FinancialScenarioMetricComparison
-    ] = Field(
+    comparisons: list[FinancialScenarioMetricComparison] = Field(
         default_factory=list,
         max_length=20,
     )
-
     limitations: list[str] = Field(
         default_factory=list,
         max_length=30,
@@ -714,26 +595,15 @@ class FinancialScenarioBundle(
         self,
     ) -> "FinancialScenarioBundle":
         expected = (
-            (
-                self.base,
-                FinancialScenarioKind.BASE,
-            ),
-            (
-                self.upside,
-                FinancialScenarioKind.UPSIDE,
-            ),
-            (
-                self.downside,
-                FinancialScenarioKind.DOWNSIDE,
-            ),
+            (self.base, FinancialScenarioKind.BASE),
+            (self.upside, FinancialScenarioKind.UPSIDE),
+            (self.downside, FinancialScenarioKind.DOWNSIDE),
         )
 
         for result, scenario in expected:
             if result.scenario != scenario:
                 raise ValueError(
-                    "Financial scenario result "
-                    "does not match its bundle "
-                    "position"
+                    "Financial scenario result does not match its bundle position"
                 )
 
         return self
