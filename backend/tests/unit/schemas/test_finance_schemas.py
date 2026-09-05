@@ -288,6 +288,7 @@ def test_calculated_metric_is_explicitly_calculated():
         ),
         value=Decimal("25000"),
         currency="egp",
+        period=FinancialPeriod.MONTHLY,
         unit="money_per_month",
         formula=(
             "selling_price_per_unit "
@@ -306,3 +307,51 @@ def test_calculated_metric_is_explicitly_calculated():
         metric.provenance
         == "CALCULATED"
     )
+
+def test_starting_cash_rejects_unit_label():
+    with pytest.raises(
+        ValidationError
+    ):
+        FinancialAssumption(
+            input_name=(
+                FinancialInputName
+                .STARTING_CASH
+            ),
+            value=Decimal("100000"),
+            provenance=(
+                FinancialAssumptionProvenance
+                .USER
+            ),
+            currency="EGP",
+            unit_label="customer",
+            rationale="Available cash.",
+            profile_fields=[
+                "starting_cash"
+            ],
+        )
+
+
+def test_price_rejects_period():
+    with pytest.raises(
+        ValidationError
+    ):
+        FinancialAssumption(
+            input_name=(
+                FinancialInputName
+                .SELLING_PRICE_PER_UNIT
+            ),
+            value=Decimal("250"),
+            provenance=(
+                FinancialAssumptionProvenance
+                .USER
+            ),
+            currency="EGP",
+            unit_label="customer",
+            period=(
+                FinancialPeriod.MONTHLY
+            ),
+            rationale="Selling price.",
+            profile_fields=[
+                "selling_price"
+            ],
+        )

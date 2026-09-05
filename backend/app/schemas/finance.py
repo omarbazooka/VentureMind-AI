@@ -447,6 +447,16 @@ MONETARY_METRICS = frozenset(
 )
 
 
+PERIOD_BASED_METRICS = (
+    MONETARY_METRICS
+    | frozenset(
+        {
+            FinancialMetricName
+            .BREAK_EVEN_UNITS,
+        }
+    )
+)
+
 class CalculatedFinancialMetric(
     BaseModel
 ):
@@ -532,7 +542,7 @@ class CalculatedFinancialMetric(
 
         if (
             self.metric_name
-            in MONETARY_METRICS
+            in PERIOD_BASED_METRICS
             and self.period is None
         ):
             raise ValueError(
@@ -542,7 +552,7 @@ class CalculatedFinancialMetric(
 
         if (
             self.metric_name
-            not in MONETARY_METRICS
+            not in PERIOD_BASED_METRICS
             and self.period is not None
         ):
             raise ValueError(

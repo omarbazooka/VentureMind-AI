@@ -420,7 +420,7 @@ def calculate_financial_scenario(
                 ),
                 value=break_even_units,
                 currency=None,
-                period=None,
+                period=calculation_period,
                 unit=unit_label,
                 formula=(
                     "normalized_fixed_costs "
