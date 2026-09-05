@@ -481,6 +481,8 @@ class CalculatedFinancialMetric(
         "CALCULATED"
     ] = "CALCULATED"
 
+    period: FinancialPeriod | None = None
+
     @field_validator("currency")
     @classmethod
     def normalize_metric_currency(
@@ -526,6 +528,26 @@ class CalculatedFinancialMetric(
                 "Non-monetary calculated "
                 "metrics cannot declare "
                 "currency"
+            )
+
+        if (
+            self.metric_name
+            in MONETARY_METRICS
+            and self.period is None
+        ):
+            raise ValueError(
+                "Period-based financial "
+                "metrics require a period"
+            )
+
+        if (
+            self.metric_name
+            not in MONETARY_METRICS
+            and self.period is not None
+        ):
+            raise ValueError(
+                "This financial metric "
+                "cannot declare a period"
             )
 
         return self
