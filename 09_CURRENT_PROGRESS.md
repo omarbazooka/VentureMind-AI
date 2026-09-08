@@ -1,101 +1,144 @@
-# VentureMind AI — Master Current Progress & Milestone Tracking
+# VentureMind AI — Current Progress
 
-## Day 1 — Foundation & Data Architecture
-- **Status:** COMPLETED & VALIDATED
-- **Key Modules:** Database models, Alembic migrations, Pydantic schemas, initial FastAPI application structure.
+_Last updated: 2026-09-08_
 
-## Day 2 — Intake Engine & AI Interrogation
-- **Status:** COMPLETED & VALIDATED
-- **Key Modules:** Intake clarification flow, dynamic domain interrogation, structured business profile extraction (`IdeaProfile`), profile readiness evaluation (`READY_FOR_ANALYSIS`), chat controller.
+This file is the current implementation checkpoint. Older milestone notes should not override this section.
 
-## Day 3 — Business Analysis Foundation & Stage Infrastructure
-- **Status:** COMPLETED & VALIDATED
-- **Key Modules:** `AnalysisRun`, `AnalysisStageRun`, `AnalysisResult` ORM models, stage claim/complete/fail mechanics in `ResearchStageService`, `BusinessAnalysisFlow` snapshot freezing and stage initialization.
+## Build Status
 
-## Day 4 — AI Gateway & Controlled Tool Infrastructure
-- **Status:** COMPLETED & VALIDATED
-- **Key Modules:** `LLMGateway`, `CrewAILLMGatewayAdapter`, `ToolGateway`, `ControlledWebSearchTool`, `ControlledBatchPageRetrievalTool`, `ResearchEvidenceLedger` single-use stage isolation, `FirecrawlWebSearchProvider`, `FirecrawlPageRetrievalProvider`.
+- **Day 1 — Foundation:** DONE
+- **Day 2 — Persistence / State:** DONE
+- **Day 3 — Chat Runtime Foundation:** DONE
+- **Day 4 — Intake:** DONE
+- **Day 5 — AnalysisRun + Research Foundation:** DONE
+- **Day 6 — Files / RAG:** DEFERRED POST-MVP (ADR-028)
+- **Day 7 — Business Strategy + Finance:** CURRENT
+- **Day 8 — Decision Analytics + Risk:** PENDING
+- **Day 9 — Validation + Final Decision:** PENDING
+- **Day 10 — Structured Report + Visualization:** PENDING
+- **Day 11 — Unified Grounded Chat Q&A:** PENDING
+- **Day 12 — Changes + Targeted Re-analysis + Compound Turns:** PENDING
+- **Day 13 — E2E Hardening:** PENDING
 
-## Day 5 — Research Stage Crews + Research Join / Evidence Gate
-- **Status:** IMPLEMENTATION COMPLETE; FINAL FULL-SUITE REGRESSION PENDING IN PROJECT ENVIRONMENT
+## Day 7 — Business Strategy
 
-### 1. Market Research Stage
-- **Status:** COMPLETED & VALIDATED
-- **Implementation:** `MarketResearchCrewRunner`, `MarketAnalysisDraft`, `finalize_market_analysis`, `execute_market_research_stage`.
-- **Validation:** bounded controlled web discovery, evidence-ledger verification, canonical-source reconstruction, deterministic numerical-citation enforcement.
+**Status: IMPLEMENTATION COMPLETE**
 
-### 2. Competitor Intelligence Stage
-- **Status:** COMPLETED & VALIDATED (HARDENED)
-- **Implementation:** `CompetitorIntelligenceCrewRunner` (`max_iter=4`), `CompetitorAnalysisDraft`, `finalize_competitor_analysis`, `execute_competitor_intelligence_stage`.
-- **Key reliability rules:** bounded discovery + detailed-page retrieval, no unsupported PMF/absence claims, `pricing=None` when unavailable, frontend-ready structured competitor profiles, canonical evidence metadata owned by the application.
-- **Latest validated live runtime checkpoint:** approximately `21.93s` after reliability hardening.
+Completed:
+- Research Join / Evidence Gate -> Business Strategy scheduling.
+- `StrategyStageClaim` and authoritative context loading.
+- Business Strategy runner and deterministic grounding.
+- Strategy claim / complete / fail lifecycle.
+- Strategy executor.
+- Research -> Strategy integration coverage.
 
-### 3. Customer Intelligence Stage
-- **Status:** COMPLETED & VALIDATED (FINAL HARDENING COMPLETE)
-- **Implementation:** `CustomerIntelligenceCrewRunner` (`max_iter=4`), `CustomerAnalysisDraft`, `finalize_customer_analysis`, `execute_customer_intelligence_stage`.
-- **Hardening rules:**
-  - non-insufficient decision-critical `OBSERVED` customer findings (`PAIN_POINT`, `ALTERNATIVE`, `BUYING_BEHAVIOR`, `DEMAND_SIGNAL`) and ANY numerical finding require controlled detailed-page evidence;
-  - provider/competitor presence is supply-side evidence and must not survive as `OBSERVED DEMAND_SIGNAL`;
-  - likely vendor-marketing-only support deterministically downgrades sensitive customer claims to `INFERRED` with confidence capped at `0.6`;
-  - vendor-only cited evidence downgrades `STRONG`/`MODERATE` evidence quality to `WEAK`;
-  - profile facts are not web evidence unless independently supported;
-  - no fake WTP, PMF, personas, or silent global-to-Egypt generalization.
-- **Final project-environment validation on 2026-08-25:**
-  - full backend suite: **224 passed, 26 warnings in 40.21s**;
-  - real Customer smoke: **PASS**;
-  - elapsed: **30.51s**;
-  - search count: **1**;
-  - page retrieval count: **0**;
-  - findings: **6**;
-  - sources: **0**;
-  - evidence quality: **INSUFFICIENT**;
-  - all decision-sensitive findings remained low-confidence `INFERRED` and the result explicitly preserved primary-research/WTP/PMF gaps.
+## Day 7 — Finance
 
-### 4. Research Join + Evidence Gate
-- **Status:** IMPLEMENTED; FOCUSED REGRESSION VERIFIED
-- **Core files:**
-  - `app/research/evidence_gate.py`
-  - `app/services/research_join.py`
-  - `BusinessAnalysisFlow.advance_research()`
-  - gate schemas in `app/schemas/research.py`
-- **Gate outcomes:**
-  - `ACCEPT`: latest Market/Competitor/Customer attempts are complete with `STRONG` or `MODERATE` evidence; downstream may proceed;
-  - `RETRY`: at least one latest stage is `FAILED` or `WEAK` and still has retry budget; downstream pauses and only those stages receive a new attempt;
-  - `INSUFFICIENT`: one or more non-retryable evidence gaps remain, but no retryable work remains; downstream may proceed with gaps explicitly preserved.
-- **Retry policy:** default maximum of **2 total attempts** per research stage (initial attempt + one targeted retry).
-- **Partial-result preservation:** the gate uses the latest attempt for current stage state, while Research Join preserves the latest successful persisted result if a later retry fails.
-- **Idempotency / concurrency safety:** retry scheduling is bounded, checks for an already-created next attempt, locks the parent run during scheduling, and rejects stale evaluations.
-- **No extra AI judge:** Join/Gate routing is deterministic Python application logic; no fourth research Crew or LLM routing call was added.
-- **Commits:**
-  - `64c93e41492d0c3ac2a2336502b4e542f2617d01` — Research Join, Evidence Gate, targeted retry, flow integration, tests;
-  - `553c27f3d1d798d04e93ad96123007b3bde97f0d` — required Research Gate schemas added to `research.py`.
-- **Focused post-schema sandbox regression:** **13 passed** covering Gate policy, Join behavior, previous-success preservation, targeted retry scheduling, and `advance_research()` wiring.
-- **Important validation boundary:** the complete repository suite has not yet been rerun after the Join/Gate commits inside ChatGPT's sandbox because the full repository/runtime cannot be cloned there. The project environment must run the final regression below before Day 5 is marked fully validated.
+**Status: CORE FINANCE RUNTIME IMPLEMENTED; LOCAL REGRESSION / INTEGRATION VERIFICATION PENDING**
 
-## Current Backend Test Status
-- Last full project-environment suite before Join/Gate: **224 passed, 26 warnings in 40.21s**.
-- New Join/Gate focused sandbox regression after schema fix: **13 passed**.
-- Final full-suite regression against current `master`: **PENDING USER PROJECT ENVIRONMENT RUN**.
+### Completed Finance primitives
+- Structured Finance contracts and explicit provenance.
+- Deterministic readiness evaluation.
+- Deterministic authoritative financial calculator.
+- Monthly / annual period normalization.
+- BASE / UPSIDE / DOWNSIDE deterministic scenario engine.
+- Bounded Finance AI Assumption Builder through `LLMGateway`; no CrewAI workflow was added because the task is a single bounded structured generation.
+- Deterministic Finance grounding for USER / WEB / AI_ASSUMPTION source boundaries.
 
-## Current Known Research Limitations
-- **Willingness to Pay:** public secondary web research cannot establish direct price sensitivity or WTP for Egyptian independent gym operators; requires primary interviews/pricing experiments.
-- **Localized Penetration Rates:** exact software penetration among independent Egyptian gyms remains unquantified in desk research.
-- **Operational Workflow Friction:** direct staff adoption resistance and migration friction require primary validation via interviews/pilots.
-- `INSUFFICIENT` is an allowed evidence state and must propagate downstream as an explicit limitation rather than trigger fabrication or uncontrolled retry loops.
+### Completed Finance stage/runtime lifecycle
+- `FinanceStageClaim` and authoritative context loading from frozen IdeaProfile snapshot, accepted Research Join state, and completed Business Strategy.
+- Durable `AnalysisRunInput` persistence for analysis-time user questions and answers.
+- `PAUSED_FOR_USER` support at both AnalysisRun and AnalysisStage level.
+- Finance pause lifecycle with one active pending question at a time.
+- Typed `FinanceInputRequest` and `FinanceUserInputAnswer` contracts.
+- Choice-aware questions with backend-grounded options plus an always-available custom / Other path.
+- Selected option answers resolve their numeric value from the persisted backend request; clients cannot override the selected option value.
+- Custom answers are validated against requested currency / unit / period when those are already fixed.
+- Answered Finance input resumes the parent AnalysisRun and returns the Finance stage to `PENDING`, so a worker must explicitly re-claim it before execution continues.
+- Finance complete / fail lifecycle and persisted `AnalysisResult` support.
 
-## Final Day 5 Validation Commands
-From `backend/` after pulling `master`:
+### Market-backed Finance options
+Initial deterministic option generation is intentionally conservative:
+- currently supports `SELLING_PRICE_PER_UNIT` only;
+- uses accepted Competitor Intelligence only;
+- ignores competitor evidence if that stage is marked insufficient;
+- uses WEB evidence only;
+- requires observed numerical pricing evidence;
+- requires the evidence statement to match the Finance currency and unit basis;
+- can expose lower observed benchmark, deterministic midpoint, and upper observed benchmark;
+- competitor prices remain modeling choices, not venture selling-price facts;
+- the user always retains a custom / Other option.
+
+Other missing Finance inputs currently fall back to a direct user question unless a future deterministic evidence rule is explicitly implemented for them.
+
+### Run-scoped USER provenance
+`FinancialAssumption` now supports USER lineage from either:
+- frozen `IdeaProfile` fields; or
+- answered `AnalysisRunInput` IDs.
+
+Analysis-time answers do not mutate or masquerade as fields from the frozen IdeaProfile snapshot.
+
+Answered run inputs are overlaid deterministically after AI draft grounding. A user-confirmed critical input is applied consistently to BASE, UPSIDE, and DOWNSIDE instead of allowing the model to invent scenario variations around that confirmed fact.
+
+### Finance Executor
+`execute_finance_stage()` now coordinates:
+
+1. claim Finance stage;
+2. run bounded Finance assumption generation;
+3. deterministic grounding;
+4. load and ground answered analysis-time user inputs;
+5. deterministic readiness evaluation;
+6. if BASE has a decision-critical missing input, build a direct or market-option request and pause for the user;
+7. if only secondary scenarios are incomplete, fail the modeling output rather than asking the user to fix an AI scenario-construction problem;
+8. calculate BASE / UPSIDE / DOWNSIDE deterministically when ready;
+9. persist the validated Finance `AnalysisResult` and complete the stage.
+
+## Current Finance tests added
+
+Focused coverage now exists for:
+- Finance stage claim;
+- Finance pause lifecycle;
+- custom answer + resume;
+- selected-option resolution from persisted request;
+- request metadata mismatch rejection;
+- run-input USER grounding and lineage;
+- deterministic latest-answer precedence;
+- market-backed low / midpoint / high price options;
+- incompatible market-option basis fallback;
+- Finance executor pause path;
+- Finance executor completion path;
+- rejection of user pauses for secondary-scenario-only modeling gaps;
+- run-scoped USER provenance schema rules.
+
+## Validation boundary
+
+The implementation above is pushed to `master`, but ChatGPT's shell environment could not clone the repository for execution because DNS resolution to GitHub failed (`Could not resolve host: github.com`). Therefore **do not mark the current Finance runtime as fully validated yet**.
+
+Run locally from `backend/`:
 
 ```powershell
-uv run pytest tests/unit/research/test_evidence_gate.py tests/unit/services/test_research_join.py tests/unit/flows/test_business_analysis_research_advance.py -v
-uv run pytest
+uv run pytest tests/unit/schemas/test_finance_runtime.py tests/unit/schemas/test_finance_run_input_provenance.py -v
+uv run pytest tests/unit/services/test_finance_pause.py tests/unit/services/test_finance_answer_resume.py tests/unit/services/test_finance_run_inputs.py tests/unit/services/test_finance_executor.py -v
+uv run pytest tests/unit/finance/test_input_options.py tests/unit/finance -v
+uv run pytest tests/unit -v
 ```
 
-Acceptance:
-- focused Join/Gate/Flow tests: 0 failed / 0 errors;
-- full backend suite: 0 failed / 0 errors.
+Acceptance: 0 failed / 0 errors.
 
-## Next Immediate Task
-- If both final regression commands pass: mark **Day 5 — COMPLETED & VALIDATED**.
-- Then start **Day 6 — Files + RAG + Evidence Retrieval**.
-- Do not begin Strategy/Finance before the planned dependency order.
+## Day 7 — Next Immediate Work
+
+After the Finance regression above passes:
+
+1. Wire **Business Strategy -> FINANCE** stage scheduling into `BusinessAnalysisFlow`.
+2. Add Finance flow/executor integration coverage using the real DB lifecycle while faking only the LLM-facing assumption builder.
+3. Verify pause -> user answer -> re-claim -> Finance completion end-to-end.
+4. Close Day 7 only after the complete Day 7 regression passes.
+
+## Important active rules
+
+- Frozen `AnalysisRun.profile_snapshot` is never silently mutated by analysis-time Finance answers.
+- Messages remain conversation history, not authoritative structured Finance state.
+- User pause is for decision-critical BASE inputs that cannot safely be resolved from authoritative state/research; it is not a fallback for arbitrary model uncertainty.
+- Competitor pricing is not venture pricing or willingness-to-pay proof.
+- LLMs never own authoritative Finance arithmetic.
+- `INSUFFICIENT_EVIDENCE` remains a valid downstream state and must not trigger fabricated numbers.
