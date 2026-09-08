@@ -25,6 +25,7 @@ class AnalysisStage(StrEnum):
     BUSINESS_STRATEGY = "BUSINESS_STRATEGY"
     FINANCE = "FINANCE"
     DECISION_ANALYTICS = "DECISION_ANALYTICS"
+    RISK = "RISK"
 
 
 class AnalysisStageStatus(StrEnum):
