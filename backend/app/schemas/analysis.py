@@ -21,7 +21,7 @@ class AnalysisRunStatus(StrEnum):
 class AnalysisStage(StrEnum):
     MARKET_RESEARCH = "MARKET_RESEARCH"
     COMPETITOR_INTELLIGENCE = "COMPETITOR_INTELLIGENCE"
-    CUSTOMER_INTELLIGENCE =  "CUSTOMER_INTELLIGENCE"
+    CUSTOMER_INTELLIGENCE = "CUSTOMER_INTELLIGENCE"
     BUSINESS_STRATEGY = "BUSINESS_STRATEGY"
     FINANCE = "FINANCE"
 
@@ -29,8 +29,15 @@ class AnalysisStage(StrEnum):
 class AnalysisStageStatus(StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
+    PAUSED_FOR_USER = "PAUSED_FOR_USER"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+
+
+class AnalysisRunInputStatus(StrEnum):
+    PENDING = "PENDING"
+    ANSWERED = "ANSWERED"
+    CANCELLED = "CANCELLED"
 
 
 class AnalysisProfileSnapshot(BaseModel):
