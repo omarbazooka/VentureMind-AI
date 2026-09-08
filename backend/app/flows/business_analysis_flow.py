@@ -27,7 +27,9 @@ from app.services.research_join import (
     inspect_research_join,
     schedule_targeted_retries,
 )
-
+from app.models.analysis_result import (
+    AnalysisResult,
+)
 
 INITIAL_RESEARCH_STAGES = (
     AnalysisStage.MARKET_RESEARCH,
@@ -368,3 +370,164 @@ class BusinessAnalysisFlow:
         db.flush()
 
         return strategy_stage_run
+        
+    def advance_strategy(
+        self,
+        *,
+        db: Session,
+        run_id: UUID,
+    ) -> AnalysisStageRun:
+        analysis_run = (
+            self._load_run_for_update(
+                db=db,
+                run_id=run_id,
+            )
+        )
+
+        if (
+            analysis_run.status
+            != AnalysisRunStatus.RUNNING.value
+        ):
+            raise BusinessAnalysisRunStateError(
+                "Business Strategy can only "
+                "advance while AnalysisRun "
+                "is RUNNING"
+            )
+
+        self._require_completed_strategy_result(
+            db=db,
+            analysis_run_id=run_id,
+        )
+
+        return self._ensure_finance_stage_run(
+            db=db,
+            analysis_run_id=run_id,
+        )  
+
+def _require_completed_strategy_result(
+    self,
+    *,
+    db: Session,
+    analysis_run_id: UUID,
+) -> AnalysisResult:
+    stage_statement = (
+        select(AnalysisStageRun)
+        .where(
+            AnalysisStageRun.analysis_run_id
+            == analysis_run_id,
+            AnalysisStageRun.stage
+            == (
+                AnalysisStage
+                .BUSINESS_STRATEGY
+                .value
+            ),
+            AnalysisStageRun.status
+            == (
+                AnalysisStageStatus
+                .COMPLETED
+                .value
+            ),
+        )
+        .order_by(
+            AnalysisStageRun.attempt.desc()
+        )
+    )
+
+    strategy_stage_run = db.scalar(
+        stage_statement
+    )
+
+    if strategy_stage_run is None:
+        raise BusinessAnalysisRunStateError(
+            "Finance cannot be scheduled "
+            "before Business Strategy "
+            "is COMPLETED"
+        )
+
+    result_statement = (
+        select(AnalysisResult)
+        .where(
+            AnalysisResult.analysis_run_id
+            == analysis_run_id,
+            AnalysisResult.stage_run_id
+            == strategy_stage_run.id,
+            AnalysisResult.stage
+            == (
+                AnalysisStage
+                .BUSINESS_STRATEGY
+                .value
+            ),
+        )
+    )
+
+    strategy_result = db.scalar(
+        result_statement
+    )
+
+    if strategy_result is None:
+        raise BusinessAnalysisRunStateError(
+            "Completed Business Strategy "
+            "has no persisted result"
+        )
+
+    return strategy_result
+
+
+def _ensure_finance_stage_run(
+    self,
+    *,
+    db: Session,
+    analysis_run_id: UUID,
+) -> AnalysisStageRun:
+    analysis_run = (
+        self._load_run_for_update(
+            db=db,
+            run_id=analysis_run_id,
+        )
+    )
+
+    if (
+        analysis_run.status
+        != AnalysisRunStatus.RUNNING.value
+    ):
+        raise BusinessAnalysisRunStateError(
+            "Finance can only be scheduled "
+            "for a RUNNING AnalysisRun"
+        )
+
+    statement = (
+        select(AnalysisStageRun)
+        .where(
+            AnalysisStageRun.analysis_run_id
+            == analysis_run_id,
+            AnalysisStageRun.stage
+            == AnalysisStage.FINANCE.value,
+            AnalysisStageRun.attempt == 1,
+        )
+    )
+
+    existing_stage_run = db.scalar(
+        statement
+    )
+
+    if existing_stage_run is not None:
+        return existing_stage_run
+
+    finance_stage_run = AnalysisStageRun(
+        analysis_run_id=analysis_run_id,
+        stage=AnalysisStage.FINANCE.value,
+        attempt=1,
+        status=(
+            AnalysisStageStatus
+            .PENDING
+            .value
+        ),
+    )
+
+    db.add(
+        finance_stage_run
+    )
+
+    db.flush()
+
+    return finance_stage_run
