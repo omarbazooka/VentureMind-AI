@@ -1,7 +1,8 @@
 from decimal import Decimal
-from uuid import UUID
 from enum import StrEnum
 from typing import Literal
+from uuid import UUID
+
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -25,6 +26,7 @@ from app.schemas.finance_ai import (
     FinanceAssumptionBuilderContext,
 )
 
+
 class FinanceStageClaim(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -32,13 +34,10 @@ class FinanceStageClaim(BaseModel):
 
     stage_run_id: UUID
     analysis_run_id: UUID
-
     stage: AnalysisStage
-
     attempt: int = Field(
         ge=1,
     )
-
     assumption_context: (
         FinanceAssumptionBuilderContext
     )
@@ -47,10 +46,7 @@ class FinanceStageClaim(BaseModel):
     def validate_finance_claim(
         self,
     ) -> "FinanceStageClaim":
-        if (
-            self.stage
-            != AnalysisStage.FINANCE
-        ):
+        if self.stage != AnalysisStage.FINANCE:
             raise ValueError(
                 "FinanceStageClaim requires "
                 "the FINANCE stage"
@@ -58,13 +54,20 @@ class FinanceStageClaim(BaseModel):
 
         return self
 
+
 class FinanceUserAnswerMode(StrEnum):
     SELECTED_OPTION = "SELECTED_OPTION"
     CUSTOM = "CUSTOM"
 
+
 class FinanceInputOptionBasis(StrEnum):
     WEB_EVIDENCE = "WEB_EVIDENCE"
     CALCULATED_FROM_WEB = "CALCULATED_FROM_WEB"
+
+
+class FinanceExecutionStatus(StrEnum):
+    COMPLETED = "COMPLETED"
+    PAUSED_FOR_USER = "PAUSED_FOR_USER"
 
 
 def _validate_known_input_metadata(
@@ -110,6 +113,7 @@ def _validate_known_input_metadata(
             "declare a period"
         )
 
+
 class FinanceInputOption(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -119,47 +123,36 @@ class FinanceInputOption(BaseModel):
         min_length=1,
         max_length=100,
     )
-
     input_name: FinancialInputName
-
     label: str = Field(
         min_length=1,
         max_length=300,
     )
-
     value: Decimal = Field(
         ge=Decimal("0"),
     )
-
     currency: str | None = None
-
     unit_label: str | None = Field(
         default=None,
         min_length=1,
         max_length=100,
     )
-
     period: FinancialPeriod | None = None
-
     basis: FinanceInputOptionBasis
-
     rationale: str = Field(
         min_length=1,
         max_length=1000,
     )
-
     supporting_stages: list[
         AnalysisStage
     ] = Field(
         min_length=1,
         max_length=3,
     )
-
     evidence_source_ids: list[str] = Field(
         min_length=1,
         max_length=20,
     )
-
     calculation_basis: (
         str | None
     ) = Field(
@@ -276,35 +269,30 @@ class FinanceInputOption(BaseModel):
 
         return self
 
+
 class FinanceInputRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
 
     input_name: FinancialInputName
-
     question: str = Field(
         min_length=1,
         max_length=1000,
     )
-
     options: list[
         FinanceInputOption
     ] = Field(
         default_factory=list,
         max_length=5,
     )
-
     allow_custom: Literal[True] = True
-
     currency: str | None = None
-
     unit_label: str | None = Field(
         default=None,
         min_length=1,
         max_length=100,
     )
-
     period: FinancialPeriod | None = None
 
     @field_validator("question")
@@ -411,10 +399,7 @@ class FinanceInputRequest(BaseModel):
             )
 
         for option in self.options:
-            if (
-                option.input_name
-                != self.input_name
-            ):
+            if option.input_name != self.input_name:
                 raise ValueError(
                     "Finance input options must "
                     "match the requested input"
@@ -441,14 +426,11 @@ class FinanceInputRequest(BaseModel):
                 option_currency,
                 option_unit,
                 option_period,
-            ) = next(
-                iter(comparison_bases)
-            )
+            ) = next(iter(comparison_bases))
 
             if (
                 self.currency is not None
-                and self.currency
-                != option_currency
+                and self.currency != option_currency
             ):
                 raise ValueError(
                     "Request currency must match "
@@ -457,8 +439,7 @@ class FinanceInputRequest(BaseModel):
 
             if (
                 self.unit_label is not None
-                and self.unit_label
-                != option_unit
+                and self.unit_label != option_unit
             ):
                 raise ValueError(
                     "Request unit must match "
@@ -467,8 +448,7 @@ class FinanceInputRequest(BaseModel):
 
             if (
                 self.period is not None
-                and self.period
-                != option_period
+                and self.period != option_period
             ):
                 raise ValueError(
                     "Request period must match "
@@ -477,15 +457,14 @@ class FinanceInputRequest(BaseModel):
 
         return self
 
+
 class FinanceUserInputAnswer(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
 
     input_name: FinancialInputName
-
     answer_mode: FinanceUserAnswerMode
-
     selected_option_id: (
         str | None
     ) = Field(
@@ -493,20 +472,16 @@ class FinanceUserInputAnswer(BaseModel):
         min_length=1,
         max_length=100,
     )
-
     value: Decimal | None = Field(
         default=None,
         ge=Decimal("0"),
     )
-
     currency: str | None = None
-
     unit_label: str | None = Field(
         default=None,
         min_length=1,
         max_length=100,
     )
-
     period: FinancialPeriod | None = None
 
     @field_validator("currency")
@@ -596,5 +571,147 @@ class FinanceUserInputAnswer(BaseModel):
             unit_label=self.unit_label,
             period=self.period,
         )
+
+        return self
+
+
+class ResolvedFinanceUserInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    input_name: FinancialInputName
+    answer_mode: FinanceUserAnswerMode
+    selected_option_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+    )
+    value: Decimal = Field(
+        ge=Decimal("0"),
+    )
+    currency: str | None = None
+    unit_label: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+    )
+    period: FinancialPeriod | None = None
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_currency(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+
+        normalized = value.strip().upper()
+        if (
+            len(normalized) != 3
+            or not normalized.isalpha()
+        ):
+            raise ValueError(
+                "currency must be a 3-letter code"
+            )
+        return normalized
+
+    @field_validator("unit_label")
+    @classmethod
+    def normalize_unit_label(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError(
+                "unit_label cannot be blank"
+            )
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_resolved_input(
+        self,
+    ) -> "ResolvedFinanceUserInput":
+        _validate_known_input_metadata(
+            input_name=self.input_name,
+            currency=self.currency,
+            unit_label=self.unit_label,
+            period=self.period,
+        )
+
+        if (
+            self.answer_mode
+            == FinanceUserAnswerMode.SELECTED_OPTION
+            and not self.selected_option_id
+        ):
+            raise ValueError(
+                "Resolved selected-option input "
+                "requires selected_option_id"
+            )
+
+        if (
+            self.answer_mode
+            == FinanceUserAnswerMode.CUSTOM
+            and self.selected_option_id is not None
+        ):
+            raise ValueError(
+                "Resolved custom input cannot "
+                "reference an option"
+            )
+
+        return self
+
+
+class FinanceExecutionOutcome(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    stage_run_id: UUID
+    analysis_run_id: UUID
+    status: FinanceExecutionStatus
+    result_id: UUID | None = None
+    run_input_id: UUID | None = None
+    request: FinanceInputRequest | None = None
+
+    @model_validator(mode="after")
+    def validate_outcome(
+        self,
+    ) -> "FinanceExecutionOutcome":
+        if self.status == FinanceExecutionStatus.COMPLETED:
+            if self.result_id is None:
+                raise ValueError(
+                    "Completed Finance outcome "
+                    "requires result_id"
+                )
+            if (
+                self.run_input_id is not None
+                or self.request is not None
+            ):
+                raise ValueError(
+                    "Completed Finance outcome cannot "
+                    "carry a pending input request"
+                )
+            return self
+
+        if (
+            self.run_input_id is None
+            or self.request is None
+        ):
+            raise ValueError(
+                "Paused Finance outcome requires "
+                "run_input_id and request"
+            )
+
+        if self.result_id is not None:
+            raise ValueError(
+                "Paused Finance outcome cannot "
+                "carry result_id"
+            )
 
         return self
