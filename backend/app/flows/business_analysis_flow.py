@@ -431,3 +431,97 @@ class BusinessAnalysisFlow:
             db=db,
             analysis_run_id=run_id,
         )
+
+    def _require_completed_analytics_result(
+        self,
+        *,
+        db: Session,
+        analysis_run_id: UUID,
+    ) -> AnalysisResult:
+        stage_statement = (
+            select(AnalysisStageRun)
+            .where(
+                AnalysisStageRun.analysis_run_id == analysis_run_id,
+                AnalysisStageRun.stage == AnalysisStage.DECISION_ANALYTICS.value,
+                AnalysisStageRun.status == AnalysisStageStatus.COMPLETED.value,
+            )
+            .order_by(AnalysisStageRun.attempt.desc())
+        )
+        analytics_stage_run = db.scalar(stage_statement)
+        if analytics_stage_run is None:
+            raise BusinessAnalysisRunStateError(
+                "Risk cannot be scheduled before Decision Analytics is COMPLETED"
+            )
+
+        result_statement = select(AnalysisResult).where(
+            AnalysisResult.analysis_run_id == analysis_run_id,
+            AnalysisResult.stage_run_id == analytics_stage_run.id,
+            AnalysisResult.stage == AnalysisStage.DECISION_ANALYTICS.value,
+        )
+        analytics_result = db.scalar(result_statement)
+        if analytics_result is None:
+            raise BusinessAnalysisRunStateError(
+                "Completed Decision Analytics stage has no persisted result"
+            )
+
+        return analytics_result
+
+    def _ensure_risk_stage_run(
+        self,
+        *,
+        db: Session,
+        analysis_run_id: UUID,
+    ) -> AnalysisStageRun:
+        analysis_run = self._load_run_for_update(
+            db=db,
+            run_id=analysis_run_id,
+        )
+
+        if analysis_run.status != AnalysisRunStatus.RUNNING.value:
+            raise BusinessAnalysisRunStateError(
+                "Risk can only be scheduled for a RUNNING AnalysisRun"
+            )
+
+        statement = select(AnalysisStageRun).where(
+            AnalysisStageRun.analysis_run_id == analysis_run_id,
+            AnalysisStageRun.stage == AnalysisStage.RISK.value,
+            AnalysisStageRun.attempt == 1,
+        )
+        existing_stage_run = db.scalar(statement)
+        if existing_stage_run is not None:
+            return existing_stage_run
+
+        risk_stage_run = AnalysisStageRun(
+            analysis_run_id=analysis_run_id,
+            stage=AnalysisStage.RISK.value,
+            attempt=1,
+            status=AnalysisStageStatus.PENDING.value,
+        )
+        db.add(risk_stage_run)
+        db.flush()
+        return risk_stage_run
+
+    def advance_analytics(
+        self,
+        *,
+        db: Session,
+        run_id: UUID,
+    ) -> AnalysisStageRun:
+        analysis_run = self._load_run_for_update(
+            db=db,
+            run_id=run_id,
+        )
+
+        if analysis_run.status != AnalysisRunStatus.RUNNING.value:
+            raise BusinessAnalysisRunStateError(
+                "Decision Analytics can only advance while AnalysisRun is RUNNING"
+            )
+
+        self._require_completed_analytics_result(
+            db=db,
+            analysis_run_id=run_id,
+        )
+        return self._ensure_risk_stage_run(
+            db=db,
+            analysis_run_id=run_id,
+        )
