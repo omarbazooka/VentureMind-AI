@@ -12,7 +12,9 @@ from app.models.analysis_run import AnalysisRun  # noqa: F401
 from app.models.analysis_stage_run import AnalysisStageRun  # noqa: F401
 from app.models.analysis_result import AnalysisResult  # noqa: F401
 from alembic import context
-
+from app.models.analysis_run_input import (
+    AnalysisRunInput,
+)  # noqa: F401
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
