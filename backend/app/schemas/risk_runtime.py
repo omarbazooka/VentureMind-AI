@@ -3,6 +3,7 @@ from uuid import UUID
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     model_validator,
 )
 
@@ -66,4 +67,22 @@ class RiskAnalysisContext(BaseModel):
                 "Decision Analytics does not reference the Finance result in this Risk context"
             )
 
+        return self
+
+
+class RiskStageClaim(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stage_run_id: UUID
+    analysis_run_id: UUID
+    stage: AnalysisStage
+    attempt: int = Field(ge=1)
+    context: RiskAnalysisContext
+
+    @model_validator(mode="after")
+    def validate_claim(self) -> "RiskStageClaim":
+        if self.stage != AnalysisStage.RISK:
+            raise ValueError(
+                "RiskStageClaim requires the RISK stage"
+            )
         return self

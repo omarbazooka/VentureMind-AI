@@ -186,6 +186,20 @@ def _ground_risk(
     )
 
 
+def validate_grounded_risk_analysis(
+    *,
+    analysis: RiskAnalysis,
+    context: RiskAnalysisContext,
+) -> RiskAnalysis:
+    for risk in analysis.risks:
+        _validate_risk_lineage(
+            risk=risk,
+            context=context,
+        )
+
+    return analysis
+
+
 def _bounded_limitations(
     *,
     draft_limitations: list[str],
@@ -248,7 +262,7 @@ def finalize_risk_analysis(
         else None
     )
 
-    return RiskAnalysis(
+    analysis = RiskAnalysis(
         executive_summary=draft.executive_summary,
         risks=grounded_risks,
         overall_level=overall_level,
@@ -256,4 +270,9 @@ def finalize_risk_analysis(
             draft_limitations=draft.limitations,
             context=context,
         ),
+    )
+
+    return validate_grounded_risk_analysis(
+        analysis=analysis,
+        context=context,
     )
