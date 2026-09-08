@@ -92,18 +92,12 @@ def _evaluate_readiness(
     )
 
 
-def _first_missing_input(
-    readiness_results: tuple[
-        FinanceReadinessResult,
-        FinanceReadinessResult,
-        FinanceReadinessResult,
-    ],
+def _first_missing_base_input(
+    readiness: FinanceReadinessResult,
 ):
-    missing = {
-        input_name
-        for readiness in readiness_results
-        for input_name in readiness.missing_critical_inputs
-    }
+    missing = set(
+        readiness.missing_critical_inputs
+    )
 
     for input_name in CRITICAL_FINANCE_INPUTS:
         if input_name in missing:
@@ -123,6 +117,19 @@ def _has_incompatible_inputs(
         readiness.status
         == FinanceReadinessStatus.INCOMPATIBLE_INPUTS
         for readiness in readiness_results
+    )
+
+
+def _secondary_scenarios_are_incomplete(
+    readiness_results: tuple[
+        FinanceReadinessResult,
+        FinanceReadinessResult,
+        FinanceReadinessResult,
+    ],
+) -> bool:
+    return any(
+        readiness.missing_critical_inputs
+        for readiness in readiness_results[1:]
     )
 
 
@@ -186,8 +193,8 @@ def execute_finance_stage(
                 "Finance inputs are incompatible"
             )
 
-        missing_input = _first_missing_input(
-            readiness_results
+        missing_input = _first_missing_base_input(
+            readiness_results[0]
         )
 
         if missing_input is not None:
@@ -218,6 +225,25 @@ def execute_finance_stage(
                 ),
                 run_input_id=run_input.id,
                 request=request,
+            )
+
+        if _secondary_scenarios_are_incomplete(
+            readiness_results
+        ):
+            _mark_finance_failed(
+                session_factory=session_factory,
+                stage_run_id=stage_run_id,
+                error_code=(
+                    "INCOMPLETE_FINANCE_SCENARIOS"
+                ),
+                error_message=(
+                    "Upside or downside assumptions are "
+                    "missing critical inputs even though "
+                    "the base case is complete."
+                ),
+            )
+            raise FinanceExecutionError(
+                "Finance scenario assumptions are incomplete"
             )
 
         result_bundle = (
