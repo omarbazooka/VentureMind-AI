@@ -540,7 +540,7 @@ def _resolve_finance_user_answer(
         request.currency is not None
         and answer.currency != request.currency
     ):
-        raise FinanceStageStateStateError(
+        raise FinanceStageStateError(
             "Custom Finance answer currency must "
             "match the requested currency"
         )
