@@ -1,6 +1,7 @@
 from decimal import Decimal
 from enum import StrEnum
 from typing import Literal
+from uuid import UUID
 
 from pydantic import (
     BaseModel,
@@ -96,6 +97,10 @@ class FinancialAssumption(BaseModel):
         default_factory=list,
         max_length=20,
     )
+    analysis_run_input_ids: list[UUID] = Field(
+        default_factory=list,
+        max_length=20,
+    )
     supporting_stages: list[AnalysisStage] = Field(
         default_factory=list,
         max_length=3,
@@ -183,6 +188,7 @@ class FinancialAssumption(BaseModel):
         if not has_value:
             if (
                 self.profile_fields
+                or self.analysis_run_input_ids
                 or self.supporting_stages
                 or self.evidence_source_ids
             ):
@@ -192,10 +198,13 @@ class FinancialAssumption(BaseModel):
             return self
 
         if self.provenance == FinancialAssumptionProvenance.USER:
-            if not self.profile_fields:
+            if (
+                not self.profile_fields
+                and not self.analysis_run_input_ids
+            ):
                 raise ValueError(
-                    "USER financial values must reference at least "
-                    "one IdeaProfile field"
+                    "USER financial values must reference an IdeaProfile "
+                    "field or an answered AnalysisRunInput"
                 )
             if self.supporting_stages or self.evidence_source_ids:
                 raise ValueError(
@@ -211,9 +220,9 @@ class FinancialAssumption(BaseModel):
                     "WEB financial values must reference research "
                     "stages and evidence source IDs"
                 )
-            if self.profile_fields:
+            if self.profile_fields or self.analysis_run_input_ids:
                 raise ValueError(
-                    "WEB financial values cannot claim IdeaProfile provenance"
+                    "WEB financial values cannot claim USER provenance"
                 )
 
         elif (
@@ -222,6 +231,7 @@ class FinancialAssumption(BaseModel):
         ):
             if (
                 self.profile_fields
+                or self.analysis_run_input_ids
                 or self.supporting_stages
                 or self.evidence_source_ids
             ):
