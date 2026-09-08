@@ -10,6 +10,7 @@ from app.schemas.finance import (
 from app.schemas.finance_runtime import (
     FinanceInputRequest,
     FinanceUserInputAnswer,
+    FinanceUserAnswerMode,
 )
 
 
@@ -159,6 +160,26 @@ def test_answer_rejects_negative_value():
                 .SELLING_PRICE_PER_UNIT
             ),
             value=Decimal("-1"),
+            currency="EGP",
+            unit_label="customer",
+        )
+
+
+def test_selected_option_answer_cannot_override_value():
+    with pytest.raises(ValidationError):
+        FinanceUserInputAnswer(
+            input_name=(
+                FinancialInputName
+                .SELLING_PRICE_PER_UNIT
+            ),
+            answer_mode=(
+                FinanceUserAnswerMode
+                .SELECTED_OPTION
+            ),
+            selected_option_id=(
+                "market_midpoint"
+            ),
+            value=Decimal("999999"),
             currency="EGP",
             unit_label="customer",
         )
