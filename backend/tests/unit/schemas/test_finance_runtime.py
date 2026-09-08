@@ -9,8 +9,8 @@ from app.schemas.finance import (
 )
 from app.schemas.finance_runtime import (
     FinanceInputRequest,
-    FinanceUserInputAnswer,
     FinanceUserAnswerMode,
+    FinanceUserInputAnswer,
 )
 
 
@@ -67,6 +67,9 @@ def test_selling_price_answer_requires_currency():
                 FinancialInputName
                 .SELLING_PRICE_PER_UNIT
             ),
+            answer_mode=(
+                FinanceUserAnswerMode.CUSTOM
+            ),
             value=Decimal("250"),
             unit_label="customer",
         )
@@ -79,6 +82,9 @@ def test_selling_price_answer_requires_unit():
                 FinancialInputName
                 .SELLING_PRICE_PER_UNIT
             ),
+            answer_mode=(
+                FinanceUserAnswerMode.CUSTOM
+            ),
             value=Decimal("250"),
             currency="EGP",
         )
@@ -88,6 +94,9 @@ def test_sales_volume_requires_unit_and_period():
     answer = FinanceUserInputAnswer(
         input_name=(
             FinancialInputName.SALES_VOLUME
+        ),
+        answer_mode=(
+            FinanceUserAnswerMode.CUSTOM
         ),
         value=Decimal("100"),
         unit_label="customer",
@@ -108,6 +117,9 @@ def test_sales_volume_rejects_currency():
                 FinancialInputName
                 .SALES_VOLUME
             ),
+            answer_mode=(
+                FinanceUserAnswerMode.CUSTOM
+            ),
             value=Decimal("100"),
             currency="EGP",
             unit_label="customer",
@@ -121,6 +133,9 @@ def test_fixed_cost_answer_requires_period():
             input_name=(
                 FinancialInputName.FIXED_COSTS
             ),
+            answer_mode=(
+                FinanceUserAnswerMode.CUSTOM
+            ),
             value=Decimal("10000"),
             currency="EGP",
         )
@@ -130,6 +145,9 @@ def test_starting_cash_requires_only_currency():
     answer = FinanceUserInputAnswer(
         input_name=(
             FinancialInputName.STARTING_CASH
+        ),
+        answer_mode=(
+            FinanceUserAnswerMode.CUSTOM
         ),
         value=Decimal("200000"),
         currency="egp",
@@ -146,6 +164,9 @@ def test_starting_cash_rejects_period():
             input_name=(
                 FinancialInputName.STARTING_CASH
             ),
+            answer_mode=(
+                FinanceUserAnswerMode.CUSTOM
+            ),
             value=Decimal("200000"),
             currency="EGP",
             period=FinancialPeriod.MONTHLY,
@@ -158,6 +179,9 @@ def test_answer_rejects_negative_value():
             input_name=(
                 FinancialInputName
                 .SELLING_PRICE_PER_UNIT
+            ),
+            answer_mode=(
+                FinanceUserAnswerMode.CUSTOM
             ),
             value=Decimal("-1"),
             currency="EGP",
