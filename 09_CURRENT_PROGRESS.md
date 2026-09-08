@@ -12,7 +12,7 @@ This file is the current implementation checkpoint. Older milestone notes should
 - **Day 4 — Intake:** DONE
 - **Day 5 — AnalysisRun + Research Foundation:** DONE
 - **Day 6 — Files / RAG:** DEFERRED POST-MVP (ADR-028)
-- **Day 7 — Business Strategy + Finance:** CURRENT
+- **Day 7 — Business Strategy + Finance:** IMPLEMENTATION COMPLETE; FINAL E2E/FULL REGRESSION VALIDATION PENDING
 - **Day 8 — Decision Analytics + Risk:** PENDING
 - **Day 9 — Validation + Final Decision:** PENDING
 - **Day 10 — Structured Report + Visualization:** PENDING
@@ -25,16 +25,18 @@ This file is the current implementation checkpoint. Older milestone notes should
 **Status: IMPLEMENTATION COMPLETE**
 
 Completed:
-- Research Join / Evidence Gate -> Business Strategy scheduling.
+- Research Join / Evidence Gate → Business Strategy scheduling.
 - `StrategyStageClaim` and authoritative context loading.
 - Business Strategy runner and deterministic grounding.
 - Strategy claim / complete / fail lifecycle.
 - Strategy executor.
-- Research -> Strategy integration coverage.
+- Research → Strategy integration coverage.
+- Completed Strategy + persisted `AnalysisResult` verification before Finance scheduling.
+- Idempotent Business Strategy → Finance scheduling through `BusinessAnalysisFlow.advance_strategy()`.
 
 ## Day 7 — Finance
 
-**Status: CORE FINANCE RUNTIME IMPLEMENTED; LOCAL REGRESSION / INTEGRATION VERIFICATION PENDING**
+**Status: IMPLEMENTATION COMPLETE; FINAL NEW INTEGRATION/FULL REGRESSION RESULTS NOT YET RECORDED**
 
 ### Completed Finance primitives
 - Structured Finance contracts and explicit provenance.
@@ -72,7 +74,7 @@ Initial deterministic option generation is intentionally conservative:
 Other missing Finance inputs currently fall back to a direct user question unless a future deterministic evidence rule is explicitly implemented for them.
 
 ### Run-scoped USER provenance
-`FinancialAssumption` now supports USER lineage from either:
+`FinancialAssumption` supports USER lineage from either:
 - frozen `IdeaProfile` fields; or
 - answered `AnalysisRunInput` IDs.
 
@@ -81,8 +83,7 @@ Analysis-time answers do not mutate or masquerade as fields from the frozen Idea
 Answered run inputs are overlaid deterministically after AI draft grounding. A user-confirmed critical input is applied consistently to BASE, UPSIDE, and DOWNSIDE instead of allowing the model to invent scenario variations around that confirmed fact.
 
 ### Finance Executor
-`execute_finance_stage()` now coordinates:
-
+`execute_finance_stage()` coordinates:
 1. claim Finance stage;
 2. run bounded Finance assumption generation;
 3. deterministic grounding;
@@ -93,52 +94,52 @@ Answered run inputs are overlaid deterministically after AI draft grounding. A u
 8. calculate BASE / UPSIDE / DOWNSIDE deterministically when ready;
 9. persist the validated Finance `AnalysisResult` and complete the stage.
 
-## Current Finance tests added
+## Day 7 — Integration coverage now added
 
-Focused coverage now exists for:
-- Finance stage claim;
-- Finance pause lifecycle;
-- custom answer + resume;
-- selected-option resolution from persisted request;
-- request metadata mismatch rejection;
-- run-input USER grounding and lineage;
-- deterministic latest-answer precedence;
-- market-backed low / midpoint / high price options;
-- incompatible market-option basis fallback;
-- Finance executor pause path;
-- Finance executor completion path;
-- rejection of user pauses for secondary-scenario-only modeling gaps;
-- run-scoped USER provenance schema rules.
+### Strategy → Finance scheduling
+`BusinessAnalysisFlow.advance_strategy()` now:
+- requires AnalysisRun = RUNNING;
+- requires a completed Business Strategy stage;
+- requires its persisted Business Strategy `AnalysisResult`;
+- reuses an existing initial Finance stage if present;
+- otherwise creates `FINANCE`, attempt 1, `PENDING`.
 
-## Validation boundary
+A helper-scope/indentation bug found by the focused unit tests was fixed by moving `_require_completed_strategy_result()` and `_ensure_finance_stage_run()` inside `BusinessAnalysisFlow`.
 
-The implementation above is pushed to `master`, but ChatGPT's shell environment could not clone the repository for execution because DNS resolution to GitHub failed (`Could not resolve host: github.com`). Therefore **do not mark the current Finance runtime as fully validated yet**.
+### Real-DB Strategy → Finance integration
+Added `tests/integration/analysis/test_strategy_to_finance.py` with real PostgreSQL transaction-backed lifecycle coverage while faking only the LLM-facing Finance assumption runner.
 
-Run locally from `backend/`:
+It covers:
+1. completed Strategy → Finance scheduling → claim → grounded assumptions → deterministic calculation → persisted Finance result → FINANCE COMPLETED;
+2. missing selling price → Finance/AnalysisRun `PAUSED_FOR_USER` → `AnalysisRunInput(PENDING)` → custom user answer → `ANSWERED` → Finance `PENDING` + AnalysisRun `RUNNING` → re-claim → run-input USER overlay → deterministic calculation → FINANCE COMPLETED.
+
+## Validation status
+
+The user reported the earlier focused Finance/unit regressions passing before the final Strategy → Finance integration addition.
+
+The following final checkpoint still needs to be recorded as passed before marking Day 7 `COMPLETED & VALIDATED`:
 
 ```powershell
-uv run pytest tests/unit/schemas/test_finance_runtime.py tests/unit/schemas/test_finance_run_input_provenance.py -v
-uv run pytest tests/unit/services/test_finance_pause.py tests/unit/services/test_finance_answer_resume.py tests/unit/services/test_finance_run_inputs.py tests/unit/services/test_finance_executor.py -v
-uv run pytest tests/unit/finance/test_input_options.py tests/unit/finance -v
+uv run pytest tests/unit/flows/test_business_analysis_strategy_advance.py -v
+uv run pytest tests/integration/analysis/test_strategy_to_finance.py -v
+uv run pytest tests/integration/analysis -v
 uv run pytest tests/unit -v
+uv run pytest -v
 ```
 
 Acceptance: 0 failed / 0 errors.
 
-## Day 7 — Next Immediate Work
-
-After the Finance regression above passes:
-
-1. Wire **Business Strategy -> FINANCE** stage scheduling into `BusinessAnalysisFlow`.
-2. Add Finance flow/executor integration coverage using the real DB lifecycle while faking only the LLM-facing assumption builder.
-3. Verify pause -> user answer -> re-claim -> Finance completion end-to-end.
-4. Close Day 7 only after the complete Day 7 regression passes.
+## Day 7 exit criteria
+When the final commands above pass:
+- mark Day 7 `COMPLETED & VALIDATED`;
+- update this file with the actual pass counts;
+- proceed to Day 8 — Decision Analytics + Risk.
 
 ## Important active rules
-
 - Frozen `AnalysisRun.profile_snapshot` is never silently mutated by analysis-time Finance answers.
 - Messages remain conversation history, not authoritative structured Finance state.
 - User pause is for decision-critical BASE inputs that cannot safely be resolved from authoritative state/research; it is not a fallback for arbitrary model uncertainty.
 - Competitor pricing is not venture pricing or willingness-to-pay proof.
+- Selected option values are resolved from persisted backend requests, not trusted client values.
 - LLMs never own authoritative Finance arithmetic.
 - `INSUFFICIENT_EVIDENCE` remains a valid downstream state and must not trigger fabricated numbers.
