@@ -21,6 +21,7 @@ from app.models.analysis_stage_run import (
 )
 from app.schemas.analysis import (
     AnalysisProfileSnapshot,
+    AnalysisRunInputStatus,
     AnalysisRunStatus,
     AnalysisStage,
     AnalysisStageStatus,
@@ -29,6 +30,7 @@ from app.schemas.finance_ai import (
     FinanceAssumptionBuilderContext,
 )
 from app.schemas.finance_runtime import (
+    FinanceInputRequest,
     FinanceStageClaim,
 )
 from app.schemas.strategy import (
@@ -38,8 +40,9 @@ from app.services.research_join import (
     ResearchJoinError,
     inspect_research_join,
 )
-
-
+from app.models.analysis_run_input import (
+    AnalysisRunInput,
+)
 class FinanceStageError(RuntimeError):
     pass
 
@@ -147,6 +150,170 @@ def _load_analysis_run(
 
     return analysis_run
 
+def _load_analysis_run_for_update(
+    *,
+    db: Session,
+    analysis_run_id: UUID,
+) -> AnalysisRun:
+    statement = (
+        select(AnalysisRun)
+        .where(
+            AnalysisRun.id
+            == analysis_run_id
+        )
+        .with_for_update()
+    )
+
+    analysis_run = db.scalar(
+        statement
+    )
+
+    if analysis_run is None:
+        raise (
+            FinanceStageRunNotFoundError(
+                "Parent analysis run "
+                "not found"
+            )
+        )
+
+    return analysis_run
+
+
+def _get_pending_finance_input(
+    *,
+    db: Session,
+    stage_run_id: UUID,
+) -> AnalysisRunInput | None:
+    statement = (
+        select(AnalysisRunInput)
+        .where(
+            AnalysisRunInput.stage_run_id
+            == stage_run_id,
+            AnalysisRunInput.status
+            == (
+                AnalysisRunInputStatus
+                .PENDING
+                .value
+            ),
+        )
+        .order_by(
+            AnalysisRunInput
+            .created_at
+            .desc()
+        )
+    )
+
+    return db.scalar(
+        statement
+    )
+
+def pause_finance_for_user_input(
+    *,
+    db: Session,
+    stage_run_id: UUID,
+    request: FinanceInputRequest,
+) -> AnalysisRunInput:
+    stage_run = (
+        _load_stage_run_for_update(
+            db=db,
+            stage_run_id=stage_run_id,
+        )
+    )
+
+    _normalize_finance_stage(
+        stage_run.stage
+    )
+
+    if (
+        stage_run.status
+        != AnalysisStageStatus
+        .RUNNING
+        .value
+    ):
+        raise FinanceStageStateError(
+            "Only a RUNNING Finance "
+            "stage can pause for user input"
+        )
+
+    analysis_run = (
+        _load_analysis_run_for_update(
+            db=db,
+            analysis_run_id=(
+                stage_run.analysis_run_id
+            ),
+        )
+    )
+
+    if (
+        analysis_run.status
+        != AnalysisRunStatus
+        .RUNNING
+        .value
+    ):
+        raise FinanceStageStateError(
+            "Finance can only pause a "
+            "RUNNING AnalysisRun"
+        )
+
+    existing_pending = (
+        _get_pending_finance_input(
+            db=db,
+            stage_run_id=stage_run.id,
+        )
+    )
+
+    if existing_pending is not None:
+        raise FinanceStageStateError(
+            "Finance already has a "
+            "pending user input request"
+        )
+
+    run_input = AnalysisRunInput(
+        analysis_run_id=(
+            analysis_run.id
+        ),
+        stage_run_id=stage_run.id,
+        input_name=(
+            request.input_name.value
+        ),
+        status=(
+            AnalysisRunInputStatus
+            .PENDING
+            .value
+        ),
+        request_data=(
+            request.model_dump(
+                mode="json"
+            )
+        ),
+        response_data=None,
+    )
+
+    db.add(
+        run_input
+    )
+
+    stage_run.status = (
+        AnalysisStageStatus
+        .PAUSED_FOR_USER
+        .value
+    )
+
+    analysis_run.status = (
+        AnalysisRunStatus
+        .PAUSED_FOR_USER
+        .value
+    )
+
+    stage_run.error_code = None
+    stage_run.error_message = None
+
+    analysis_run.error_code = None
+    analysis_run.error_message = None
+
+    db.flush()
+
+    return run_input
 
 def _validate_snapshot(
     analysis_run: AnalysisRun,
