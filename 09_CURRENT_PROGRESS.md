@@ -12,8 +12,8 @@ This file is the current implementation checkpoint. Older milestone notes should
 - **Day 4 — Intake:** DONE
 - **Day 5 — AnalysisRun + Research Foundation:** DONE
 - **Day 6 — Files / RAG:** DEFERRED POST-MVP (ADR-028)
-- **Day 7 — Business Strategy + Finance:** IMPLEMENTATION COMPLETE; FINAL E2E/FULL REGRESSION VALIDATION PENDING
-- **Day 8 — Decision Analytics + Risk:** PENDING
+- **Day 7 — Business Strategy + Finance:** COMPLETED & VALIDATED
+- **Day 8 — Decision Analytics + Risk:** NEXT
 - **Day 9 — Validation + Final Decision:** PENDING
 - **Day 10 — Structured Report + Visualization:** PENDING
 - **Day 11 — Unified Grounded Chat Q&A:** PENDING
@@ -22,7 +22,7 @@ This file is the current implementation checkpoint. Older milestone notes should
 
 ## Day 7 — Business Strategy
 
-**Status: IMPLEMENTATION COMPLETE**
+**Status: COMPLETED & VALIDATED**
 
 Completed:
 - Research Join / Evidence Gate → Business Strategy scheduling.
@@ -36,7 +36,7 @@ Completed:
 
 ## Day 7 — Finance
 
-**Status: IMPLEMENTATION COMPLETE; FINAL NEW INTEGRATION/FULL REGRESSION RESULTS NOT YET RECORDED**
+**Status: COMPLETED & VALIDATED**
 
 ### Completed Finance primitives
 - Structured Finance contracts and explicit provenance.
@@ -94,10 +94,10 @@ Answered run inputs are overlaid deterministically after AI draft grounding. A u
 8. calculate BASE / UPSIDE / DOWNSIDE deterministically when ready;
 9. persist the validated Finance `AnalysisResult` and complete the stage.
 
-## Day 7 — Integration coverage now added
+## Day 7 — Validated integration coverage
 
 ### Strategy → Finance scheduling
-`BusinessAnalysisFlow.advance_strategy()` now:
+`BusinessAnalysisFlow.advance_strategy()`:
 - requires AnalysisRun = RUNNING;
 - requires a completed Business Strategy stage;
 - requires its persisted Business Strategy `AnalysisResult`;
@@ -107,33 +107,30 @@ Answered run inputs are overlaid deterministically after AI draft grounding. A u
 A helper-scope/indentation bug found by the focused unit tests was fixed by moving `_require_completed_strategy_result()` and `_ensure_finance_stage_run()` inside `BusinessAnalysisFlow`.
 
 ### Real-DB Strategy → Finance integration
-Added `tests/integration/analysis/test_strategy_to_finance.py` with real PostgreSQL transaction-backed lifecycle coverage while faking only the LLM-facing Finance assumption runner.
+`tests/integration/analysis/test_strategy_to_finance.py` provides real PostgreSQL transaction-backed lifecycle coverage while faking only the LLM-facing Finance assumption runner.
 
-It covers:
+It validates:
 1. completed Strategy → Finance scheduling → claim → grounded assumptions → deterministic calculation → persisted Finance result → FINANCE COMPLETED;
 2. missing selling price → Finance/AnalysisRun `PAUSED_FOR_USER` → `AnalysisRunInput(PENDING)` → custom user answer → `ANSWERED` → Finance `PENDING` + AnalysisRun `RUNNING` → re-claim → run-input USER overlay → deterministic calculation → FINANCE COMPLETED.
 
-## Validation status
+## Day 7 final validation
 
-The user reported the earlier focused Finance/unit regressions passing before the final Strategy → Finance integration addition.
+**Final backend regression: 370 passed, 0 failed, 0 errors.**
 
-The following final checkpoint still needs to be recorded as passed before marking Day 7 `COMPLETED & VALIDATED`:
+The full regression includes the focused Strategy → Finance scheduling coverage, real-DB Strategy → Finance integration, Finance pause/answer/re-claim behavior, and the existing backend unit/integration suite.
 
-```powershell
-uv run pytest tests/unit/flows/test_business_analysis_strategy_advance.py -v
-uv run pytest tests/integration/analysis/test_strategy_to_finance.py -v
-uv run pytest tests/integration/analysis -v
-uv run pytest tests/unit -v
-uv run pytest -v
-```
+Day 7 exit criteria are satisfied.
 
-Acceptance: 0 failed / 0 errors.
+## Next milestone
 
-## Day 7 exit criteria
-When the final commands above pass:
-- mark Day 7 `COMPLETED & VALIDATED`;
-- update this file with the actual pass counts;
-- proceed to Day 8 — Decision Analytics + Risk.
+### Day 8 — Decision Analytics + Risk
+Next work:
+- define authoritative analytics/KPI contracts;
+- deterministic KPI and comparison calculations;
+- sensitivity analysis where calculations are authoritative;
+- Risk stage contracts/lifecycle/executor;
+- Finance → Decision Analytics → Risk dependency scheduling;
+- grounded Chat AI access to analytics/risk outputs when those conversational capabilities are implemented.
 
 ## Important active rules
 - Frozen `AnalysisRun.profile_snapshot` is never silently mutated by analysis-time Finance answers.
