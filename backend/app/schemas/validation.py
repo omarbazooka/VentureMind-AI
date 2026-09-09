@@ -75,9 +75,9 @@ class ValidationIssue(BaseModel):
         if self.severity in {ValidationSeverity.HIGH, ValidationSeverity.CRITICAL} and not self.affected_stages:
             raise ValueError("High-severity validation issues require affected stages")
 
-        # Pydantic validates the declared shape only. Whether the declared
-        # references are truthful and sufficient is checked deterministically
-        # against ValidationAnalysisContext in validation_grounding.py.
+        # Pydantic validates declared shape only. Truthfulness of these
+        # references is checked deterministically against the exact runtime
+        # context by validation_grounding.py.
         for values, label in (
             (self.affected_stages, "affected_stages"),
             (self.profile_fields, "profile_fields"),
@@ -108,6 +108,10 @@ class ValidationAnalysis(BaseModel):
     executive_assessment: str = Field(min_length=10, max_length=2000)
     issues: list[ValidationIssue] = Field(default_factory=list, max_length=30)
     can_proceed: bool
+    # Kept for backward-compatible serialization during the Job Fair branch,
+    # but Day 9 must never schedule upstream retries directly. Validation issues
+    # already carry affected_stages; Day 12's deterministic impact resolver owns
+    # dependency invalidation and targeted re-analysis.
     retry_stages: list[AnalysisStage] = Field(default_factory=list, max_length=8)
     limitations: list[str] = Field(default_factory=list, max_length=40)
     upstream_stage_run_ids: dict[AnalysisStage, UUID] = Field(default_factory=dict)
@@ -119,10 +123,11 @@ class ValidationAnalysis(BaseModel):
         if self.status != ValidationStatus.FAILED and not self.can_proceed:
             raise ValueError("Non-failed validation must permit progression")
 
-        if len(self.retry_stages) != len(set(self.retry_stages)):
-            raise ValueError("retry_stages cannot contain duplicates")
-        if set(self.retry_stages) - VALIDATION_UPSTREAM_STAGES:
-            raise ValueError("retry_stages may only reference validation upstream stages")
+        if self.retry_stages:
+            raise ValueError(
+                "Independent Validation cannot schedule targeted retries directly; "
+                "dependency-aware re-analysis owns retry scheduling"
+            )
 
         if self.upstream_stage_run_ids:
             if set(self.upstream_stage_run_ids) != VALIDATION_UPSTREAM_STAGES:
