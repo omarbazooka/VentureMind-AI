@@ -1,3 +1,4 @@
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.schemas.report import StructuredReport
@@ -8,228 +9,454 @@ from app.schemas.report_action import (
 )
 
 
-def handle_report_action(
-    *,
-    report: StructuredReport,
-    request: ReportActionRequest,
+def _lines(values: list[str], *, empty_message: str) -> str:
+    cleaned = [value.strip() for value in values if value and value.strip()]
+    if not cleaned:
+        return f"- {empty_message}"
+    return "\n".join(f"- {value}" for value in cleaned)
+
+
+def _report_ref(path: str) -> str:
+    return f"REPORT:{path}"
+
+
+def _source_ids_for_section(report: StructuredReport, section: str) -> list[str]:
+    stage_by_section = {
+        "market": "MARKET_RESEARCH",
+        "competitor": "COMPETITOR_INTELLIGENCE",
+        "competitors": "COMPETITOR_INTELLIGENCE",
+        "customer": "CUSTOMER_INTELLIGENCE",
+        "customers": "CUSTOMER_INTELLIGENCE",
+    }
+    stage = stage_by_section.get(section)
+    if stage is None:
+        return []
+    return [source.source_id for source in report.sources if source.stage == stage]
+
+
+def _extract_assumption_value(base: dict[str, Any], name: str) -> tuple[Any, str | None]:
+    assumption = base.get("assumptions", {}).get(name, {})
+    if not isinstance(assumption, dict):
+        return None, None
+    return assumption.get("value"), assumption.get("currency")
+
+
+def _safe_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def _break_even_action(
+    *, report: StructuredReport, action: ReportActionType
 ) -> ReportActionResponse:
-    action = request.action
-    target_section = (request.target_section or "").lower()
-    target_metric = (request.target_metric or "").lower()
+    base = report.finance.base_scenario
+    price_raw, price_currency = _extract_assumption_value(
+        base, "selling_price_per_unit"
+    )
+    variable_raw, variable_currency = _extract_assumption_value(
+        base, "variable_cost_per_unit"
+    )
+    fixed_raw, fixed_currency = _extract_assumption_value(
+        base, "fixed_costs"
+    )
+    price = _safe_decimal(price_raw)
+    variable = _safe_decimal(variable_raw)
+    fixed = _safe_decimal(fixed_raw)
 
-    if action == ReportActionType.EXPLAIN_CALCULATION:
-        if "break_even" in target_metric or "breakeven" in target_metric or not target_metric:
-            base_assumptions = report.finance.base_scenario.get("assumptions", {})
-            price = base_assumptions.get("selling_price_per_unit", {}).get("value", "N/A")
-            currency = base_assumptions.get("selling_price_per_unit", {}).get("currency", "USD")
-            var_cost = base_assumptions.get("variable_cost_per_unit", {}).get("value", "N/A")
-            fixed_costs = base_assumptions.get("fixed_costs", {}).get("value", "N/A")
+    base_break_even = next(
+        (
+            item
+            for item in report.chart_data.break_even_comparison
+            if item.get("scenario") == "BASE"
+        ),
+        None,
+    )
 
-            be_comparison = report.chart_data.break_even_comparison
-            base_be = next((item for item in be_comparison if item.get("scenario") == "BASE"), {})
-            be_units = base_be.get("break_even_units", "N/A")
-            be_rev = base_be.get("break_even_revenue", "N/A")
-
-            try:
-                cm_val = f"{float(price) - float(var_cost):.2f}"
-            except (ValueError, TypeError):
-                cm_val = "N/A"
-
-            content = (
-                f"### Break-Even Calculation Breakdown\n\n"
-                f"**Formula:**\n"
-                f"$$\\text{{Break-Even Volume}} = \\frac{{\\text{{Fixed Costs}}}}{{\\text{{Price per Unit}} - \\text{{Variable Cost per Unit}}}}$$\n\n"
-                f"**Authoritative Base Scenario Inputs:**\n"
-                f"- Selling Price per Unit: `{price} {currency}`\n"
-                f"- Variable Cost per Unit: `{var_cost} {currency}`\n"
-                f"- Contribution Margin per Unit: `{cm_val} {currency}`\n"
-                f"- Fixed Costs: `{fixed_costs} {currency}/period`\n\n"
-                f"**Result:**\n"
-                f"- Break-Even Sales Volume: **{be_units} units**\n"
-                f"- Break-Even Revenue: **{be_rev} {currency}**\n\n"
-                f"Below this volume, the business operates at a net loss; above it, each additional unit contributes to operating profit."
-            )
-            return ReportActionResponse(
-                action=action,
-                title="Break-Even Calculation",
-                content=content,
-                grounding_references=["FINANCE:base_scenario", "FINANCE:break_even_units"],
-                suggested_followups=[
-                    "What happens if price drops by 10%?",
-                    "How does upside scenario change break-even?",
-                ],
-                metadata={"metric": "break_even", "units": be_units, "revenue": be_rev},
-            )
-        else:
-            return ReportActionResponse(
-                action=action,
-                title=f"Calculation for {target_metric}",
-                content=f"Calculation details for {target_metric} are derived from verified financial scenarios.",
-                grounding_references=["FINANCE"],
-            )
-
-    elif action == ReportActionType.CHALLENGE_CONCLUSION:
-        dec = report.decision
-        negatives = dec.strongest_negative_signals or ["No severe negative signals noted."]
-        assumptions = dec.critical_assumptions or ["Fixed overhead remains controlled."]
-        changes = dec.what_could_change or ["Conversion drops significantly."]
-        limitations = dec.limitations or ["Pilot validation required."]
-
-        content = (
-            f"### Critical Stress-Test & Conclusion Challenges\n\n"
-            f"**Current Recommendation:** `{dec.decision.value}` (Confidence: `{dec.confidence.value}`)\n\n"
-            f"**Strongest Vulnerabilities Identified:**\n"
-            + "\n".join(f"- {n}" for n in negatives)
-            + "\n\n**Fragile Assumptions Under Stress:**\n"
-            + "\n".join(f"- {a}" for a in assumptions)
-            + "\n\n**Conditions That Would Flip Decision to NO-GO:**\n"
-            + "\n".join(f"- {c}" for c in changes)
-            + "\n\n**Known Assessment Limitations:**\n"
-            + "\n".join(f"- {l}" for l in limitations)
-        )
+    if (
+        price is None
+        or variable is None
+        or fixed is None
+        or base_break_even is None
+        or base_break_even.get("break_even_units") is None
+    ):
         return ReportActionResponse(
             action=action,
-            title="Adversarial Conclusion Challenge",
-            content=content,
-            grounding_references=["INVESTMENT_COMMITTEE:decision", "RISK:risks"],
-            suggested_followups=[
-                "What pilot experiments de-risk these assumptions?",
-                "Show sensitivity ranking",
-            ],
+            title="Break-Even Calculation",
+            content=(
+                "The persisted report does not contain enough authoritative "
+                "Finance inputs to explain the break-even calculation."
+            ),
+            grounding_references=[_report_ref("finance.base_scenario")],
+            metadata={"available": False},
         )
 
-    elif action == ReportActionType.SHOW_SOURCES:
-        if not report.sources:
-            content = "No external web citations were registered for this report. Data relied on internal profiling and deterministic modeling."
-        else:
-            lines = [
-                f"- **{s.title}** ({s.provenance}) - Stage: `{s.stage}`"
-                + (f" [Link]({s.url})" if s.url else "")
-                for s in report.sources
-            ]
-            content = "### Verified Evidence Sources\n\n" + "\n".join(lines)
+    currency = price_currency or variable_currency or fixed_currency
+    contribution_margin = price - variable
+    break_even_units = base_break_even.get("break_even_units")
+    break_even_revenue = base_break_even.get("break_even_revenue")
+    period = base_break_even.get("period")
 
+    content = (
+        "### Break-Even Calculation\n\n"
+        "**Formula**\n\n"
+        "Break-even units = Fixed costs / (Selling price per unit - Variable cost per unit)\n\n"
+        "**Persisted Base inputs**\n"
+        f"- Selling price per unit: {price}"
+        + (f" {currency}" if currency else "")
+        + "\n"
+        f"- Variable cost per unit: {variable}"
+        + (f" {currency}" if currency else "")
+        + "\n"
+        f"- Contribution margin per unit: {contribution_margin}"
+        + (f" {currency}" if currency else "")
+        + "\n"
+        f"- Fixed costs: {fixed}"
+        + (f" {currency}" if currency else "")
+        + (f" / {period.lower()}" if isinstance(period, str) else "")
+        + "\n\n"
+        f"**Authoritative break-even units:** {break_even_units}"
+    )
+    if break_even_revenue is not None:
+        content += (
+            "\n**Derived break-even revenue:** "
+            f"{break_even_revenue}"
+            + (f" {currency}" if currency else "")
+        )
+
+    return ReportActionResponse(
+        action=action,
+        title="Break-Even Calculation",
+        content=content,
+        grounding_references=[
+            _report_ref("finance.base_scenario.assumptions"),
+            _report_ref("chart_data.break_even_comparison.BASE"),
+        ],
+        metadata={
+            "available": True,
+            "break_even_units": break_even_units,
+            "break_even_revenue": break_even_revenue,
+        },
+    )
+
+
+def _show_sources(
+    *, report: StructuredReport, action: ReportActionType
+) -> ReportActionResponse:
+    if not report.sources:
         return ReportActionResponse(
             action=action,
             title="Report Evidence Sources",
-            content=content,
-            grounding_references=[s.source_id for s in report.sources],
-            suggested_followups=["Show market evidence", "Explain research quality"],
+            content="No persisted WEB evidence sources are available for this report.",
+            grounding_references=[],
+            metadata={"source_count": 0},
         )
 
-    elif action == ReportActionType.SHOW_EVIDENCE:
-        if "market" in target_section:
-            sec = report.market
-            evidence_lines = [f"- {f.get('claim', str(f))}" for f in sec.findings]
-            content = (
-                f"### Market Research Evidence\n\n"
-                f"**Evidence Quality:** `{sec.evidence_quality}`\n\n"
-                + ("**Key Findings:**\n" + "\n".join(evidence_lines) if evidence_lines else "No specific claims recorded.")
-                + f"\n\n**Limitations:** {', '.join(sec.limitations) or 'None'}"
+    content = "### Persisted Evidence Sources\n\n" + "\n".join(
+        (
+            f"- **{source.title}** — {source.provenance} — {source.stage}"
+            + (f" — {source.url}" if source.url else "")
+        )
+        for source in report.sources
+    )
+    return ReportActionResponse(
+        action=action,
+        title="Report Evidence Sources",
+        content=content,
+        grounding_references=[source.source_id for source in report.sources],
+        metadata={"source_count": len(report.sources)},
+    )
+
+
+def _show_evidence(
+    *, report: StructuredReport, request: ReportActionRequest
+) -> ReportActionResponse:
+    section = (request.target_section or "").strip().lower()
+
+    if section == "market":
+        findings = report.market.findings
+        quality = report.market.evidence_quality
+        limitations = report.market.limitations
+    elif section in {"competitor", "competitors"}:
+        findings = report.competitors.findings
+        quality = report.competitors.evidence_quality
+        limitations = report.competitors.limitations
+    elif section in {"customer", "customers"}:
+        findings = report.customer.findings
+        quality = report.customer.evidence_quality
+        limitations = report.customer.limitations
+    else:
+        return ReportActionResponse(
+            action=request.action,
+            title="Evidence",
+            content=(
+                "Select Market, Competitors, or Customers to inspect the persisted "
+                "research evidence for that section."
+            ),
+            grounding_references=[],
+            metadata={"available": False},
+        )
+
+    finding_lines = [str(item) for item in findings]
+    source_ids = _source_ids_for_section(report, section)
+    content = (
+        f"### {section.title()} Evidence\n\n"
+        f"**Evidence quality:** {quality}\n\n"
+        "**Persisted findings**\n"
+        + _lines(
+            finding_lines,
+            empty_message="No structured findings are persisted for this section.",
+        )
+        + "\n\n**Limitations**\n"
+        + _lines(
+            limitations,
+            empty_message="No additional limitations are recorded for this section.",
+        )
+    )
+    if not source_ids:
+        content += "\n\nNo persisted WEB source IDs are attached to this section."
+
+    return ReportActionResponse(
+        action=request.action,
+        title=f"Evidence for {section.title()}",
+        content=content,
+        grounding_references=source_ids,
+        metadata={"source_count": len(source_ids)},
+    )
+
+
+def _challenge_conclusion(
+    *, report: StructuredReport, action: ReportActionType
+) -> ReportActionResponse:
+    decision = report.decision
+    content = (
+        "### Challenge the Current Conclusion\n\n"
+        f"**Current recommendation:** {decision.decision.value}\n"
+        f"**Confidence:** {decision.confidence.value}\n\n"
+        "**Recorded negative signals**\n"
+        + _lines(
+            decision.strongest_negative_signals,
+            empty_message="No negative signals are recorded in the persisted Final Decision.",
+        )
+        + "\n\n**Critical assumptions**\n"
+        + _lines(
+            decision.critical_assumptions,
+            empty_message="No critical assumptions are recorded in the persisted Final Decision.",
+        )
+        + "\n\n**What could change the decision**\n"
+        + _lines(
+            decision.what_could_change,
+            empty_message="No decision-flip conditions are recorded in the persisted Final Decision.",
+        )
+        + "\n\n**Known limitations**\n"
+        + _lines(
+            decision.limitations,
+            empty_message="No additional limitations are recorded in the persisted Final Decision.",
+        )
+    )
+    return ReportActionResponse(
+        action=action,
+        title="Conclusion Challenge",
+        content=content,
+        grounding_references=[
+            _report_ref("decision.strongest_negative_signals"),
+            _report_ref("decision.critical_assumptions"),
+            _report_ref("decision.what_could_change"),
+            _report_ref("decision.limitations"),
+        ],
+    )
+
+
+def _explain_chart(
+    *, report: StructuredReport, request: ReportActionRequest
+) -> ReportActionResponse:
+    metric = (request.target_metric or "").strip().lower()
+    if "monthly" in metric or "projection" in metric:
+        if not report.chart_data.monthly_projections:
+            return ReportActionResponse(
+                action=request.action,
+                title="Monthly Projection",
+                content=(
+                    "No authoritative month-by-month projection series is available. "
+                    "VentureMind will not invent a monthly ramp in the report layer."
+                ),
+                grounding_references=[_report_ref("chart_data.monthly_projections")],
+                metadata={"available": False},
             )
-        elif "competitor" in target_section:
-            sec = report.competitors
-            comp_names = [c.get("name", "Unknown") for c in sec.competitors]
-            content = (
-                f"### Competitor Intelligence Evidence\n\n"
-                f"**Evidence Quality:** `{sec.evidence_quality}`\n"
-                f"**Tracked Competitors:** {', '.join(comp_names) or 'None'}\n\n"
-                f"**Summary:** {sec.summary}"
-            )
+
+    if "break_even" in metric or "breakeven" in metric:
+        if not report.chart_data.break_even_comparison:
+            content = "No authoritative break-even chart data is available in this report."
         else:
-            content = f"### Evidence Grounding for {target_section or 'Evaluation'}\n\nEvidence was gathered across Market, Competitor, Customer, and Financial modeling stages."
-
-        return ReportActionResponse(
-            action=action,
-            title=f"Evidence for {target_section.title() or 'Report'}",
-            content=content,
-            grounding_references=["MARKET_RESEARCH", "COMPETITOR_INTELLIGENCE", "CUSTOMER_INTELLIGENCE"],
-        )
-
-    elif action == ReportActionType.EXPLAIN_CHART:
-        if "break_even" in target_metric:
             content = (
-                "### Understanding the Break-Even Comparison Chart\n\n"
-                "This visualization shows the required unit sales volume to cover all fixed and variable costs "
-                "under Base, Upside, and Downside scenarios. The Downside scenario tests higher variable costs or lower pricing, "
-                "requiring more units to reach zero profit."
+                "The break-even comparison uses the persisted Finance scenario results. "
+                "Each point shows the calculated break-even units for Base, Upside, "
+                "and Downside; break-even revenue is derived only when both break-even "
+                "units and selling price are available."
             )
-        elif "monthly" in target_metric or "projection" in target_metric:
-            content = (
-                "### Understanding the 12-Month Projections Chart\n\n"
-                "This chart tracks expected monthly revenue ramp against operating costs and cumulative cash position. "
-                "Initial months reflect conservative ramp-up before reaching steady-state volume."
-            )
-        else:
-            content = (
-                "### Visualization Overview\n\n"
-                "Interactive charts summarize scenario break-even points, monthly cash projections, and risk distribution matrix."
-            )
-
         return ReportActionResponse(
-            action=action,
-            title="Chart Explanation",
+            action=request.action,
+            title="Break-Even Chart",
             content=content,
-            grounding_references=["chart_data"],
-            suggested_followups=["Explain break-even calculation", "Show sensitivity ranking"],
+            grounding_references=[_report_ref("chart_data.break_even_comparison")],
+            metadata={"available": bool(report.chart_data.break_even_comparison)},
         )
 
-    elif action == ReportActionType.EXPLAIN_SIMPLY:
-        dec = report.decision.decision.value
+    if "sensitivity" in metric:
+        available = bool(report.chart_data.sensitivity_ranking)
         content = (
-            f"### In Simple Terms (ELI5)\n\n"
-            f"**The Bottom Line:** VentureMind rates this project as **{dec}**.\n\n"
-            f"**Why?**\n"
-            f"{report.decision.rationale}\n\n"
-            f"**What you need to do next:**\n"
-            + "\n".join(f"- {s}" for s in report.decision.recommended_next_steps)
+            "The sensitivity ranking is copied from deterministic Decision Analytics."
+            if available
+            else "No authoritative sensitivity ranking is available in this report."
         )
         return ReportActionResponse(
-            action=action,
-            title="Simple Summary",
+            action=request.action,
+            title="Sensitivity Chart",
             content=content,
-            grounding_references=["INVESTMENT_COMMITTEE:decision"],
-            suggested_followups=["Show financial details", "What are the biggest risks?"],
+            grounding_references=[_report_ref("chart_data.sensitivity_ranking")],
+            metadata={"available": available},
         )
 
-    elif action == ReportActionType.WHAT_COULD_CHANGE:
-        sensitivity_items = report.chart_data.sensitivity_ranking
-        sens_lines = [
-            f"- **{s.get('input_name')}** (Shock: ±{s.get('shock_percent')}%): "
-            + ", ".join(f"{imp.get('metric_name')} changes by {imp.get('change_percent')}%" for imp in s.get("impacts", []))
-            for s in sensitivity_items
-        ]
-        content = (
-            "### Sensitivity & Key Variables\n\n"
-            "Small shifts in these parameters have the greatest leverage on venture viability:\n\n"
-            + ("\n".join(sens_lines) if sens_lines else "- Sensitivity analysis details captured in analytical report.")
-            + "\n\n**Decision Flip Triggers:**\n"
-            + "\n".join(f"- {c}" for c in report.decision.what_could_change)
+    return ReportActionResponse(
+        action=request.action,
+        title="Chart Explanation",
+        content=(
+            "Specify break-even, sensitivity, or monthly projection to explain a "
+            "persisted chart dataset."
+        ),
+        grounding_references=[],
+        metadata={"available": False},
+    )
+
+
+def _what_could_change(
+    *, report: StructuredReport, action: ReportActionType
+) -> ReportActionResponse:
+    decision_changes = report.decision.what_could_change
+    sensitivity = report.chart_data.sensitivity_ranking
+
+    sensitivity_lines: list[str] = []
+    for item in sensitivity:
+        name = item.get("input_name")
+        rank = item.get("rank")
+        impact = item.get("max_abs_ranking_metric_change_percent")
+        if name:
+            text = str(name)
+            if rank is not None:
+                text += f" — rank {rank}"
+            if impact is not None:
+                text += f" — max absolute modeled impact {impact}%"
+            sensitivity_lines.append(text)
+
+    content = (
+        "### What Could Change the Decision\n\n"
+        "**Final Decision conditions**\n"
+        + _lines(
+            decision_changes,
+            empty_message="No explicit decision-flip conditions are recorded.",
         )
-        return ReportActionResponse(
-            action=action,
-            title="What Could Change",
-            content=content,
-            grounding_references=["DECISION_ANALYTICS:sensitivity", "INVESTMENT_COMMITTEE:what_could_change"],
-            suggested_followups=["Explain break-even calculation", "Challenge conclusion"],
+        + "\n\n**Deterministic sensitivity ranking**\n"
+        + _lines(
+            sensitivity_lines,
+            empty_message="No sensitivity ranking is available.",
+        )
+    )
+    return ReportActionResponse(
+        action=action,
+        title="What Could Change",
+        content=content,
+        grounding_references=[
+            _report_ref("decision.what_could_change"),
+            _report_ref("chart_data.sensitivity_ranking"),
+        ],
+    )
+
+
+def _grounded_summary(
+    *, report: StructuredReport, request: ReportActionRequest, simple: bool = False
+) -> ReportActionResponse:
+    decision = report.decision
+    question = (request.question or "").strip()
+    heading = "Simple Report Summary" if simple else "Grounded Report Summary"
+
+    content = (
+        f"### {heading}\n\n"
+        + (f"**Question:** {question}\n\n" if question else "")
+        + f"**Decision:** {decision.decision.value}\n"
+        + f"**Confidence:** {decision.confidence.value}\n\n"
+        + f"**Grounded rationale:** {decision.rationale}\n\n"
+        + "**Strongest recorded positive signals**\n"
+        + _lines(
+            decision.strongest_positive_signals,
+            empty_message="No positive signals are recorded in the Final Decision.",
+        )
+        + "\n\n**Strongest recorded negative signals**\n"
+        + _lines(
+            decision.strongest_negative_signals,
+            empty_message="No negative signals are recorded in the Final Decision.",
+        )
+        + "\n\n**Recommended next steps**\n"
+        + _lines(
+            decision.recommended_next_steps,
+            empty_message="No next steps are recorded in the Final Decision.",
+        )
+    )
+    if question:
+        content += (
+            "\n\nThis deterministic response is intentionally limited to persisted report "
+            "facts. A bounded LLM synthesis may later phrase a more specific answer, "
+            "but it must use the same report evidence and cannot invent new facts."
         )
 
-    else:  # ASK_VENTUREMIND or general EXPLAIN
-        q = request.question or "Can you explain this report?"
-        content = (
-            f"### VentureMind Report Analysis\n\n"
-            f"**In response to:** *\"{q}\"*\n\n"
-            f"Based on the validated assessment for **{report.title}**:\n\n"
-            f"- **Executive Decision:** `{report.decision.decision.value}` with `{report.decision.confidence.value}` confidence.\n"
-            f"- **Key Strength:** {', '.join(report.decision.strongest_positive_signals) or 'Positive gross margin potential'}.\n"
-            f"- **Key Watchpoint:** {', '.join(report.decision.strongest_negative_signals) or 'Execution & adoption velocity'}.\n"
-            f"- **Validation Status:** `{report.validation.status}` ({report.validation.executive_assessment})\n\n"
-            f"Feel free to click any metric or chart for detailed calculation formulas."
-        )
+    return ReportActionResponse(
+        action=request.action,
+        title=heading,
+        content=content,
+        grounding_references=[
+            _report_ref("decision.decision"),
+            _report_ref("decision.confidence"),
+            _report_ref("decision.rationale"),
+            _report_ref("decision.strongest_positive_signals"),
+            _report_ref("decision.strongest_negative_signals"),
+            _report_ref("decision.recommended_next_steps"),
+        ],
+    )
+
+
+def handle_report_action(
+    *, report: StructuredReport, request: ReportActionRequest
+) -> ReportActionResponse:
+    if request.action == ReportActionType.SHOW_SOURCES:
+        return _show_sources(report=report, action=request.action)
+    if request.action == ReportActionType.SHOW_EVIDENCE:
+        return _show_evidence(report=report, request=request)
+    if request.action == ReportActionType.EXPLAIN_CALCULATION:
+        metric = (request.target_metric or "").strip().lower()
+        if not metric or "break_even" in metric or "breakeven" in metric:
+            return _break_even_action(report=report, action=request.action)
         return ReportActionResponse(
-            action=action,
-            title="Grounded Q&A Response",
-            content=content,
-            grounding_references=["INVESTMENT_COMMITTEE", "INDEPENDENT_VALIDATION", "FINANCE"],
-            suggested_followups=["Explain break-even calculation", "Challenge conclusion", "Show evidence"],
+            action=request.action,
+            title="Calculation Explanation",
+            content=(
+                f"No deterministic calculation explainer is registered for '{metric}'. "
+                "VentureMind will not invent a formula."
+            ),
+            grounding_references=[],
+            metadata={"available": False},
         )
+    if request.action == ReportActionType.EXPLAIN_CHART:
+        return _explain_chart(report=report, request=request)
+    if request.action == ReportActionType.CHALLENGE_CONCLUSION:
+        return _challenge_conclusion(report=report, action=request.action)
+    if request.action == ReportActionType.WHAT_COULD_CHANGE:
+        return _what_could_change(report=report, action=request.action)
+    if request.action == ReportActionType.EXPLAIN_SIMPLY:
+        return _grounded_summary(report=report, request=request, simple=True)
+
+    # EXPLAIN and ASK_VENTUREMIND are deliberately conservative here. The same
+    # Chat AI can later perform bounded natural-language synthesis over selected
+    # report context; this deterministic fallback never fabricates report facts.
+    return _grounded_summary(report=report, request=request, simple=False)
