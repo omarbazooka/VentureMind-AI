@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createIdea } from '@/lib/api';
-import { Sparkles, ArrowRight, Lightbulb, AlertCircle } from 'lucide-react';
+import { AlertCircle, ArrowRight, Lightbulb, Sparkles } from 'lucide-react';
+
+import { createIdea, sendMessage } from '@/lib/api';
 
 export default function NewIdeaPage() {
   const router = useRouter();
@@ -12,160 +13,100 @@ export default function NewIdeaPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!title.trim() || !description.trim()) {
-      setError('Please provide both venture title and concept description.');
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    const cleanTitle = title.trim();
+    const cleanDescription = description.trim();
+
+    if (!cleanTitle || !cleanDescription) {
+      setError('Please provide a title and describe the idea.');
       return;
     }
 
+    setSubmitting(true);
+    setError(null);
+
     try {
-      setSubmitting(true);
-      setError(null);
-      const newIdea = await createIdea({
-        title: title.trim(),
-        description: description.trim(),
+      const idea = await createIdea({
+        title: cleanTitle,
+        description: cleanDescription,
       });
-      router.push(`/ideas/${newIdea.id}`);
+
+      // Feed the initial concept through the same Chat/Intake path that owns
+      // IdeaProfile extraction, validation, clarification, and readiness.
+      await sendMessage(idea.id, cleanDescription);
+      router.push(`/ideas/${idea.id}`);
     } catch (err: any) {
-      setError(err.message || 'Failed to submit venture concept');
+      setError(err.message || 'Could not create the idea workspace.');
       setSubmitting(false);
     }
   }
 
   return (
-    <div className="container" style={{ maxWidth: '680px' }}>
-      <div style={{ marginBottom: '32px' }}>
-        <h1 style={{ fontSize: '32px', fontWeight: 800, letterSpacing: '-0.02em', marginBottom: '8px' }}>
-          New Venture Intake
-        </h1>
-        <p style={{ color: 'var(--text-muted)', fontSize: '15px' }}>
-          Enter your venture concept. Our multi-agent intelligence pipeline will conduct market research,
-          construct DCF financial models, perform sensitivity testing, and formulate an Investment Committee verdict.
+    <div className="container" style={{ maxWidth: 760, paddingBottom: 48 }}>
+      <div style={{ marginBottom: 28 }}>
+        <div style={{ color: 'var(--primary-light)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>
+          Start Idea
+        </div>
+        <h1 style={{ fontSize: 34, fontWeight: 800, marginTop: 6 }}>What are you thinking about?</h1>
+        <p style={{ color: 'var(--text-muted)', fontSize: 15, lineHeight: 1.6, marginTop: 10 }}>
+          Give VentureMind the idea in your own words. The Chat AI will extract grounded facts into an Idea Profile and ask the most useful clarification before analysis can start.
         </p>
       </div>
 
       <div className="card">
         {error && (
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '12px 16px',
-            backgroundColor: 'var(--danger-bg)',
-            border: '1px solid var(--danger-border)',
-            borderRadius: 'var(--radius-md)',
-            color: 'var(--danger)',
-            fontSize: '14px',
-            marginBottom: '20px',
-          }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: 12, border: '1px solid var(--danger-border)', borderRadius: 10, color: 'var(--danger)', marginBottom: 18 }}>
             <AlertCircle size={18} />
             <span>{error}</span>
           </div>
         )}
 
         <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', fontSize: '14px', fontWeight: 600, marginBottom: '8px' }}>
-              Venture Name / Title
-            </label>
-            <input
-              type="text"
-              placeholder="e.g., FleetPulse AI"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
-              minLength={3}
-              maxLength={120}
-              style={{
-                width: '100%',
-                padding: '12px 16px',
-                backgroundColor: 'var(--bg-base)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-md)',
-                color: 'var(--text-main)',
-                fontSize: '15px',
-                outline: 'none',
-              }}
-            />
-          </div>
+          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+            Idea name
+          </label>
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="e.g. CareDesk AI"
+            minLength={3}
+            maxLength={200}
+            required
+            style={{ width: '100%', padding: '12px 14px', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-main)', marginBottom: 20 }}
+          />
 
-          <div style={{ marginBottom: '28px' }}>
-            <label style={{ display: 'block', fontSize: '14px', fontWeight: 600, marginBottom: '8px' }}>
-              Concept Description & Value Proposition
-            </label>
-            <textarea
-              placeholder="Describe what problem you are solving, target customers, business model, and initial pricing assumptions..."
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              required
-              minLength={10}
-              maxLength={2000}
-              rows={6}
-              style={{
-                width: '100%',
-                padding: '14px 16px',
-                backgroundColor: 'var(--bg-base)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-md)',
-                color: 'var(--text-main)',
-                fontSize: '14px',
-                lineHeight: 1.6,
-                outline: 'none',
-                resize: 'vertical',
-              }}
-            />
-            <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '6px' }}>
-              Include target market, customer pain point, and proposed pricing (e.g. $49/mo per seat) for optimal model accuracy.
-            </div>
-          </div>
+          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+            Describe the idea
+          </label>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            placeholder="Who is it for, what problem does it solve, where will it operate, and how might it make money? Share only what you actually know."
+            minLength={10}
+            maxLength={10000}
+            rows={8}
+            required
+            style={{ width: '100%', padding: '14px', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-main)', lineHeight: 1.6, resize: 'vertical' }}
+          />
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '12px' }}>
-            <button
-              type="button"
-              onClick={() => router.push('/dashboard')}
-              className="btn btn-secondary"
-              disabled={submitting}
-            >
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
+            <button type="button" className="btn btn-secondary" disabled={submitting} onClick={() => router.push('/dashboard')}>
               Cancel
             </button>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={submitting}
-              style={{ minWidth: '160px' }}
-            >
-              {submitting ? (
-                <>
-                  <span className="spin"><Sparkles size={16} /></span>
-                  <span>Creating...</span>
-                </>
-              ) : (
-                <>
-                  <span>Launch Due Diligence</span>
-                  <ArrowRight size={16} />
-                </>
-              )}
+            <button type="submit" className="btn btn-primary" disabled={submitting}>
+              {submitting ? <span className="spin"><Sparkles size={16} /></span> : <ArrowRight size={16} />}
+              {submitting ? 'Starting conversation…' : 'Start Conversation'}
             </button>
           </div>
         </form>
       </div>
 
-      {/* Helper Card */}
-      <div style={{
-        marginTop: '24px',
-        padding: '16px 20px',
-        borderRadius: 'var(--radius-md)',
-        backgroundColor: 'var(--bg-surface)',
-        border: '1px solid var(--border)',
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: '12px',
-      }}>
-        <Lightbulb size={20} color="var(--primary-light)" style={{ flexShrink: 0, marginTop: '2px' }} />
-        <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-          <strong>How it works:</strong> Once submitted, the autonomous pipeline will research market signals, verify competitor pricing, calculate DCF/LBO unit economics, and test financial sensitivities. If key variables are missing, the system will pause and ask for your inputs.
-        </div>
+      <div style={{ display: 'flex', gap: 10, marginTop: 18, color: 'var(--text-muted)', fontSize: 13, lineHeight: 1.55 }}>
+        <Lightbulb size={18} color="var(--primary-light)" style={{ flexShrink: 0 }} />
+        <span>
+          Analysis never starts automatically. VentureMind first builds and validates the Idea Profile, then enables an explicit Start Analysis action only when the profile is ready.
+        </span>
       </div>
     </div>
   );
