@@ -168,19 +168,31 @@ class RiskDraft(BaseModel):
                 "Risk drafts may only reference upstream analysis stages"
             )
 
-        has_lineage = any(
+        concrete_lineage = any(
             (
                 self.profile_fields,
-                self.supporting_stages,
                 self.evidence_source_ids,
                 self.financial_metrics,
                 self.decision_kpis,
                 self.sensitivity_inputs,
             )
         )
-        if not has_lineage:
+        evidence_quality_stage_lineage = (
+            self.category == RiskCategory.EVIDENCE_QUALITY
+            and bool(
+                set(self.supporting_stages)
+                & RISK_RESEARCH_STAGES
+            )
+        )
+
+        if not (
+            concrete_lineage
+            or evidence_quality_stage_lineage
+        ):
             raise ValueError(
-                "Risk drafts must declare at least one grounding reference"
+                "Risk drafts require concrete grounding references; "
+                "stage-only grounding is reserved for EVIDENCE_QUALITY "
+                "risks tied to research stages"
             )
 
         if (

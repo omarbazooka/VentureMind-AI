@@ -4,6 +4,7 @@ from app.schemas.risk import (
     RISK_RESEARCH_STAGES,
     GroundedRisk,
     RiskAnalysis,
+    RiskCategory,
     RiskDraft,
     RiskDraftAnalysis,
     calculate_risk_score,
@@ -80,11 +81,65 @@ def _available_sensitivity_inputs(
     }
 
 
+def _has_concrete_lineage(risk: RiskDraft) -> bool:
+    return any(
+        (
+            risk.profile_fields,
+            risk.evidence_source_ids,
+            risk.financial_metrics,
+            risk.decision_kpis,
+            risk.sensitivity_inputs,
+        )
+    )
+
+
+def _validate_stage_only_evidence_quality_lineage(
+    *,
+    risk: RiskDraft,
+    context: RiskAnalysisContext,
+) -> None:
+    if _has_concrete_lineage(risk):
+        return
+
+    if risk.category != RiskCategory.EVIDENCE_QUALITY:
+        raise RiskGroundingError(
+            "Stage-only grounding is only valid for EVIDENCE_QUALITY risks"
+        )
+
+    declared_research_stages = (
+        set(risk.supporting_stages)
+        & RISK_RESEARCH_STAGES
+    )
+    if not declared_research_stages:
+        raise RiskGroundingError(
+            "Stage-only EVIDENCE_QUALITY risk requires a research stage"
+        )
+
+    insufficient_stages = set(
+        context.research_gate.insufficient_stages
+    )
+    invalid_stages = (
+        declared_research_stages
+        - insufficient_stages
+    )
+    if invalid_stages:
+        raise RiskGroundingError(
+            "Stage-only EVIDENCE_QUALITY risk may reference only research "
+            "stages marked INSUFFICIENT_EVIDENCE by the Research Evidence Gate: "
+            f"{sorted(stage.value for stage in invalid_stages)}"
+        )
+
+
 def _validate_risk_lineage(
     *,
     risk: RiskDraft,
     context: RiskAnalysisContext,
 ) -> None:
+    _validate_stage_only_evidence_quality_lineage(
+        risk=risk,
+        context=context,
+    )
+
     profile_fields = set(
         context.profile_snapshot.profile_data
     )

@@ -94,8 +94,9 @@ def make_result() -> RiskDraftAnalysis:
                 likelihood=RiskLikelihood.MEDIUM,
                 impact=RiskImpact.MEDIUM,
                 confidence=0.7,
-                rationale="The supplied strategy contains unresolved critical assumptions.",
+                rationale="The supplied profile and strategy contain unresolved execution assumptions.",
                 supporting_stages=[AnalysisStage.BUSINESS_STRATEGY],
+                profile_fields=["idea_description"],
             )
         ],
     )
@@ -124,6 +125,7 @@ def test_builds_risk_crew_without_tools():
     assert "Do not perform web research" in crew.tasks[0].description
     assert "Do not output risk_score" in crew.tasks[0].description
     assert "INSUFFICIENT_EVIDENCE" in crew.tasks[0].description
+    assert "supporting_stages alone is NOT sufficient" in crew.tasks[0].description
 
 
 def test_runner_returns_structured_risk_draft(monkeypatch):

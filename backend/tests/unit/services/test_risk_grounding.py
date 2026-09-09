@@ -250,3 +250,61 @@ def test_rejects_finance_metric_not_present_in_context():
             ),
             context=context,
         )
+
+
+def test_stage_only_evidence_quality_accepts_insufficient_research_stage():
+    context = make_context()
+    risk = RiskDraft(
+        category=RiskCategory.EVIDENCE_QUALITY,
+        title="Insufficient market evidence",
+        statement="Market evidence is insufficient for a strong conclusion.",
+        likelihood=RiskLikelihood.MEDIUM,
+        impact=RiskImpact.MEDIUM,
+        confidence=0.5,
+        rationale="The Research Evidence Gate marked market research insufficient.",
+        supporting_stages=[AnalysisStage.MARKET_RESEARCH],
+    )
+
+    result = finalize_risk_analysis(
+        draft=RiskDraftAnalysis(
+            executive_summary="Evidence quality remains a decision risk.",
+            risks=[risk],
+        ),
+        context=context,
+    )
+
+    assert result.risks[0].category == RiskCategory.EVIDENCE_QUALITY
+
+
+def test_stage_only_evidence_quality_rejects_stage_not_marked_insufficient():
+    context = make_context()
+    accepted_market_gate = context.research_gate.model_copy(
+        update={
+            "insufficient_stages": [
+                AnalysisStage.COMPETITOR_INTELLIGENCE,
+                AnalysisStage.CUSTOMER_INTELLIGENCE,
+            ]
+        }
+    )
+    context = context.model_copy(
+        update={"research_gate": accepted_market_gate}
+    )
+    risk = RiskDraft(
+        category=RiskCategory.EVIDENCE_QUALITY,
+        title="Invented market evidence weakness",
+        statement="Market evidence is insufficient.",
+        likelihood=RiskLikelihood.MEDIUM,
+        impact=RiskImpact.MEDIUM,
+        confidence=0.5,
+        rationale="This should be rejected because the gate did not mark it insufficient.",
+        supporting_stages=[AnalysisStage.MARKET_RESEARCH],
+    )
+
+    with pytest.raises(RiskGroundingError):
+        finalize_risk_analysis(
+            draft=RiskDraftAnalysis(
+                executive_summary="Invalid gate lineage.",
+                risks=[risk],
+            ),
+            context=context,
+        )

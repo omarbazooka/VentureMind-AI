@@ -61,6 +61,34 @@ def test_risk_draft_rejects_no_grounding_lineage():
         RiskDraft(**data)
 
 
+def test_non_evidence_quality_risk_rejects_stage_only_grounding():
+    data = make_financial_risk(
+        category=RiskCategory.EXECUTION,
+        supporting_stages=[AnalysisStage.BUSINESS_STRATEGY],
+        financial_metrics=[],
+        decision_kpis=[],
+        sensitivity_inputs=[],
+    )
+
+    with pytest.raises(ValidationError):
+        RiskDraft(**data)
+
+
+def test_evidence_quality_risk_accepts_research_stage_only_grounding():
+    risk = RiskDraft(
+        category=RiskCategory.EVIDENCE_QUALITY,
+        title="Limited market evidence",
+        statement="Market evidence is insufficient for a strong conclusion.",
+        likelihood=RiskLikelihood.MEDIUM,
+        impact=RiskImpact.MEDIUM,
+        confidence=0.5,
+        rationale="The Research Evidence Gate marked market evidence insufficient.",
+        supporting_stages=[AnalysisStage.MARKET_RESEARCH],
+    )
+
+    assert risk.supporting_stages == [AnalysisStage.MARKET_RESEARCH]
+
+
 def test_financial_metric_reference_requires_finance_stage():
     data = make_financial_risk(
         supporting_stages=[AnalysisStage.DECISION_ANALYTICS],
