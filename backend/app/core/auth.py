@@ -28,6 +28,25 @@ class AuthenticatedUser(BaseModel):
     role: str = "authenticated"
 
 
+def enforce_idea_ownership(
+    *,
+    owner_user_id: UUID | None,
+    user: AuthenticatedUser | None,
+) -> None:
+    """Reject access to an owned idea unless the authenticated user owns it.
+
+    Unowned rows remain accessible for legacy/demo compatibility. New authenticated
+    app flows should create owned ideas and therefore receive the stricter boundary.
+    """
+    if owner_user_id is not None and (
+        user is None or user.user_id != owner_user_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: you do not have permission to access this idea",
+        )
+
+
 def _verify_token(token: str) -> dict:
     """Verify Supabase JWT token via JWKS (asymmetric) or shared secret (symmetric)."""
     try:
@@ -62,12 +81,12 @@ def _verify_token(token: str) -> dict:
             logger.warning("Supabase asymmetric JWT verification failed: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid authentication token: {exc}",
+                detail="Invalid authentication token",
                 headers={"WWW-Authenticate": "Bearer"},
             ) from exc
 
     # 2. Symmetric verification (HS256 - legacy Supabase secret)
-    elif alg == "HS256":
+    if alg == "HS256":
         secret = (
             settings.supabase_jwt_secret.get_secret_value()
             if settings.supabase_jwt_secret
@@ -91,16 +110,15 @@ def _verify_token(token: str) -> dict:
             logger.warning("Supabase HS256 JWT verification failed: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid authentication token: {exc}",
+                detail="Invalid authentication token",
                 headers={"WWW-Authenticate": "Bearer"},
             ) from exc
 
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Unsupported token algorithm: {alg}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=f"Unsupported token algorithm: {alg}",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def get_current_user(
