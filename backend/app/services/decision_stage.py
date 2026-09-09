@@ -20,6 +20,10 @@ from app.services.decision_context import (
     DecisionContextDependencyError,
     build_investment_committee_context,
 )
+from app.services.decision_grounding import (
+    DecisionGroundingError,
+    validate_persisted_decision,
+)
 
 
 class DecisionStageError(RuntimeError):
@@ -204,6 +208,28 @@ def complete_decision_stage(
     except ValidationError as exc:
         raise DecisionStageResultValidationError(
             "Investment Committee returned an invalid structured result"
+        ) from exc
+
+    try:
+        _load_analysis_run(
+            db=db,
+            analysis_run_id=stage_run.analysis_run_id,
+        )
+        current_context = build_investment_committee_context(
+            db=db,
+            analysis_run_id=stage_run.analysis_run_id,
+        )
+        validate_persisted_decision(
+            analysis=validated_result,
+            context=current_context,
+        )
+    except (
+        DecisionStageStateError,
+        DecisionContextDependencyError,
+        DecisionGroundingError,
+    ) as exc:
+        raise DecisionStageDependencyError(
+            "Investment Committee upstream context changed or result lost grounding before persistence"
         ) from exc
 
     analysis_result = AnalysisResult(
