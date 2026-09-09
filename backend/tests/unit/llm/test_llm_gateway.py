@@ -456,22 +456,28 @@ def test_candidate_models_avoids_duplicates():
         client=Mock(),
         fallback_models=["gemini-3.1-flash-lite", "gemini-2.5-flash-lite"],
     )
-    # When requesting 3.5
     candidates = gateway._candidate_models("gemini-3.5-flash-lite")
-    assert candidates == ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]
+    assert candidates == [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash-lite",
+    ]
 
-    # When requesting 3.1 directly
     candidates_direct = gateway._candidate_models("gemini-3.1-flash-lite")
-    assert candidates_direct == ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]
+    assert candidates_direct == [
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash-lite",
+    ]
 
 
 def test_generate_structured_falls_back_on_rate_limit():
     client = Mock()
 
-    # Primary model throws 429 quota exhausted; fallback model 3.1 succeeds
     def mock_generate(model, contents, config=None):
         if model == "gemini-3.5-flash-lite":
-            raise RuntimeError("429 ResourceExhausted: Quota exceeded for model gemini-3.5-flash-lite")
+            raise RuntimeError(
+                "429 ResourceExhausted: Quota exceeded for model gemini-3.5-flash-lite"
+            )
         if model == "gemini-3.1-flash-lite":
             return FakeResponse(VALID_TURN_JSON)
         raise RuntimeError("Unexpected model called")
@@ -492,17 +498,24 @@ def test_generate_structured_falls_back_on_rate_limit():
 
     assert result.execution_mode == ExecutionMode.SINGLE
     assert client.models.generate_content.call_count == 2
-    assert client.models.generate_content.call_args_list[0].kwargs["model"] == "gemini-3.5-flash-lite"
-    assert client.models.generate_content.call_args_list[1].kwargs["model"] == "gemini-3.1-flash-lite"
+    assert (
+        client.models.generate_content.call_args_list[0].kwargs["model"]
+        == "gemini-3.5-flash-lite"
+    )
+    assert (
+        client.models.generate_content.call_args_list[1].kwargs["model"]
+        == "gemini-3.1-flash-lite"
+    )
 
 
 def test_generate_structured_cascades_to_second_fallback():
     client = Mock()
 
-    # Primary throws 429, first fallback 3.1 throws 429, second fallback 2.5 succeeds
     def mock_generate(model, contents, config=None):
         if model in ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite"):
-            raise RuntimeError(f"429 ResourceExhausted: Quota exceeded for {model}")
+            raise RuntimeError(
+                f"429 ResourceExhausted: Quota exceeded for {model}"
+            )
         if model == "gemini-2.5-flash-lite":
             return FakeResponse(VALID_TURN_JSON)
         raise RuntimeError(f"Unexpected model: {model}")
@@ -523,9 +536,18 @@ def test_generate_structured_cascades_to_second_fallback():
 
     assert result.execution_mode == ExecutionMode.SINGLE
     assert client.models.generate_content.call_count == 3
-    assert client.models.generate_content.call_args_list[0].kwargs["model"] == "gemini-3.5-flash-lite"
-    assert client.models.generate_content.call_args_list[1].kwargs["model"] == "gemini-3.1-flash-lite"
-    assert client.models.generate_content.call_args_list[2].kwargs["model"] == "gemini-2.5-flash-lite"
+    assert (
+        client.models.generate_content.call_args_list[0].kwargs["model"]
+        == "gemini-3.5-flash-lite"
+    )
+    assert (
+        client.models.generate_content.call_args_list[1].kwargs["model"]
+        == "gemini-3.1-flash-lite"
+    )
+    assert (
+        client.models.generate_content.call_args_list[2].kwargs["model"]
+        == "gemini-2.5-flash-lite"
+    )
 
 
 def test_generate_text_falls_back_on_rate_limit():
@@ -553,7 +575,60 @@ def test_generate_text_falls_back_on_rate_limit():
 
     assert text == "Fallback text response"
     assert client.models.generate_content.call_count == 2
-    assert client.models.generate_content.call_args_list[0].kwargs["model"] == "gemini-3.5-flash-lite"
-    assert client.models.generate_content.call_args_list[1].kwargs["model"] == "gemini-3.1-flash-lite"
+    assert (
+        client.models.generate_content.call_args_list[0].kwargs["model"]
+        == "gemini-3.5-flash-lite"
+    )
+    assert (
+        client.models.generate_content.call_args_list[1].kwargs["model"]
+        == "gemini-3.1-flash-lite"
+    )
 
-
+
+def test_invalid_structured_output_does_not_switch_models():
+    client = Mock()
+    client.models.generate_content.return_value = FakeResponse(
+        '{"execution_mode":"INVALID"}'
+    )
+
+    gateway = LLMGateway(
+        client=client,
+        fallback_models=["gemini-3.1-flash-lite", "gemini-2.5-flash-lite"],
+    )
+
+    with pytest.raises(LLMInvalidOutputError):
+        gateway.generate_structured(
+            model="gemini-3.5-flash-lite",
+            system_prompt="Understand turn.",
+            user_prompt="Hello",
+            response_model=TurnUnderstanding,
+        )
+
+    assert client.models.generate_content.call_count == 2
+    assert {
+        call.kwargs["model"]
+        for call in client.models.generate_content.call_args_list
+    } == {"gemini-3.5-flash-lite"}
+
+
+def test_empty_text_output_does_not_switch_models():
+    client = Mock()
+    client.models.generate_content.return_value = FakeResponse("")
+
+    gateway = LLMGateway(
+        client=client,
+        fallback_models=["gemini-3.1-flash-lite", "gemini-2.5-flash-lite"],
+    )
+
+    with pytest.raises(LLMInvalidOutputError):
+        gateway.generate_text(
+            model="gemini-3.5-flash-lite",
+            system_prompt="System.",
+            user_prompt="Hello",
+        )
+
+    assert client.models.generate_content.call_count == 1
+    assert (
+        client.models.generate_content.call_args.kwargs["model"]
+        == "gemini-3.5-flash-lite"
+    )
