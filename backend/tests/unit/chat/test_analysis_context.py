@@ -147,3 +147,53 @@ def test_rejects_non_day8_analysis_stage_request():
         )
 
     db.get.assert_not_called()
+
+
+def test_loads_validation_and_decision_stages():
+    db = Mock(spec=Session)
+    idea_id = uuid4()
+    run_id = uuid4()
+    db.get.return_value = SimpleNamespace(
+        id=run_id,
+        idea_id=idea_id,
+    )
+    val_data = {
+        "status": "PASSED",
+        "can_proceed": True,
+        "executive_assessment": "Assumptions challenged and verified.",
+        "issues": [],
+        "limitations": [],
+        "retry_stages": [],
+    }
+    dec_data = {
+        "decision": "CONDITIONAL_GO",
+        "confidence": "HIGH",
+        "rationale": "High margin opportunity.",
+        "supporting_evidence_lineage": ["FINANCE"],
+        "strongest_positive_signals": ["High LTV"],
+        "strongest_negative_signals": [],
+        "critical_assumptions": [],
+        "limitations": [],
+        "what_could_change": [],
+        "recommended_next_steps": ["Run pilot"],
+    }
+    db.scalar.side_effect = [
+        _result(val_data),
+        _result(dec_data),
+    ]
+
+    context = load_chat_analysis_context(
+        db=db,
+        idea_id=idea_id,
+        analysis_run_id=run_id,
+        stages={
+            AnalysisStage.INDEPENDENT_VALIDATION,
+            AnalysisStage.INVESTMENT_COMMITTEE,
+        },
+    )
+
+    assert context.validation_analysis is not None
+    assert context.validation_analysis.status.value == "PASSED"
+    assert context.final_decision is not None
+    assert context.final_decision.decision.value == "CONDITIONAL_GO"
+

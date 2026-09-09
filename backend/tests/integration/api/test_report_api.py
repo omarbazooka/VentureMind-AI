@@ -188,3 +188,29 @@ def test_get_report_endpoints():
     # 5. Non-existent idea
     res_fake = client.get(f"/api/v1/ideas/{uuid4()}/report/latest")
     assert res_fake.status_code == 404
+
+    # 6. Execute report action: EXPLAIN_CALCULATION
+    act_res = client.post(
+        f"/api/v1/ideas/{idea_id_str}/report/action",
+        json={"action": "EXPLAIN_CALCULATION", "target_metric": "break_even"},
+    )
+    assert act_res.status_code == 200
+    act_data = act_res.json()
+    assert act_data["action"] == "EXPLAIN_CALCULATION"
+    assert "Break-Even Calculation" in act_data["title"]
+
+    # 7. Execute report action: CHALLENGE_CONCLUSION
+    chal_res = client.post(
+        f"/api/v1/ideas/{idea_id_str}/report/action",
+        json={"action": "CHALLENGE_CONCLUSION"},
+    )
+    assert chal_res.status_code == 200
+    assert "Adversarial Conclusion Challenge" in chal_res.json()["title"]
+
+    # 8. Execute report action: ASK_VENTUREMIND
+    ask_res = client.post(
+        f"/api/v1/ideas/{idea_id_str}/report/action",
+        json={"action": "ASK_VENTUREMIND", "question": "Is this venture viable?"},
+    )
+    assert ask_res.status_code == 200
+    assert "Grounded Q&A Response" in ask_res.json()["title"]

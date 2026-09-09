@@ -12,13 +12,24 @@ from app.schemas.analysis import (
     AnalysisStageStatus,
 )
 from app.schemas.analytics import DecisionAnalyticsResult
+from app.schemas.decision import FinalDecisionAnalysis
 from app.schemas.risk import RiskAnalysis
+from app.schemas.validation import ValidationAnalysis
 
+
+DEFAULT_CHAT_READABLE_STAGES = frozenset(
+    {
+        AnalysisStage.DECISION_ANALYTICS,
+        AnalysisStage.RISK,
+    }
+)
 
 CHAT_READABLE_ANALYSIS_STAGES = frozenset(
     {
         AnalysisStage.DECISION_ANALYTICS,
         AnalysisStage.RISK,
+        AnalysisStage.INDEPENDENT_VALIDATION,
+        AnalysisStage.INVESTMENT_COMMITTEE,
     }
 )
 
@@ -34,6 +45,8 @@ class ChatAnalysisContext(BaseModel):
     analysis_run_id: UUID
     decision_analytics: DecisionAnalyticsResult | None = None
     risk_analysis: RiskAnalysis | None = None
+    validation_analysis: ValidationAnalysis | None = None
+    final_decision: FinalDecisionAnalysis | None = None
 
 
 def _load_latest_completed_result(
@@ -73,7 +86,7 @@ def load_chat_analysis_context(
     requested_stages = (
         set(stages)
         if stages is not None
-        else set(CHAT_READABLE_ANALYSIS_STAGES)
+        else set(DEFAULT_CHAT_READABLE_STAGES)
     )
 
     unsupported = (
@@ -82,7 +95,7 @@ def load_chat_analysis_context(
     )
     if unsupported:
         raise ValueError(
-            "Chat analysis context only supports Decision Analytics and Risk: "
+            "Chat analysis context only supports readable stages: "
             f"{sorted(stage.value for stage in unsupported)}"
         )
 
@@ -102,6 +115,8 @@ def load_chat_analysis_context(
 
     decision_analytics = None
     risk_analysis = None
+    validation_analysis = None
+    final_decision = None
 
     if AnalysisStage.DECISION_ANALYTICS in requested_stages:
         analytics_result = _load_latest_completed_result(
@@ -137,9 +152,43 @@ def load_chat_analysis_context(
                     "Persisted Risk result is invalid"
                 ) from exc
 
+    if AnalysisStage.INDEPENDENT_VALIDATION in requested_stages:
+        val_result = _load_latest_completed_result(
+            db=db,
+            analysis_run_id=analysis_run_id,
+            stage=AnalysisStage.INDEPENDENT_VALIDATION,
+        )
+        if val_result is not None:
+            try:
+                validation_analysis = ValidationAnalysis.model_validate(
+                    val_result.result_data
+                )
+            except ValidationError as exc:
+                raise ChatAnalysisContextError(
+                    "Persisted Validation result is invalid"
+                ) from exc
+
+    if AnalysisStage.INVESTMENT_COMMITTEE in requested_stages:
+        dec_result = _load_latest_completed_result(
+            db=db,
+            analysis_run_id=analysis_run_id,
+            stage=AnalysisStage.INVESTMENT_COMMITTEE,
+        )
+        if dec_result is not None:
+            try:
+                final_decision = FinalDecisionAnalysis.model_validate(
+                    dec_result.result_data
+                )
+            except ValidationError as exc:
+                raise ChatAnalysisContextError(
+                    "Persisted Final Decision result is invalid"
+                ) from exc
+
     return ChatAnalysisContext(
         idea_id=idea_id,
         analysis_run_id=analysis_run_id,
         decision_analytics=decision_analytics,
         risk_analysis=risk_analysis,
+        validation_analysis=validation_analysis,
+        final_decision=final_decision,
     )

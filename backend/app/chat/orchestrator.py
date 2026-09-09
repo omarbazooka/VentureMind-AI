@@ -5,6 +5,7 @@ from app.chat.handlers import (
     HandlerResult,
     handle_general_chat,
     handle_intake_request,
+    handle_report_qa_request,
 )
 from app.chat.intake_handler import (
     IntakeHandler,
@@ -102,6 +103,25 @@ class TurnOrchestrator:
                 intake_handler=(
                     self._intake_handler
                 ),
+            )
+
+        if request.intent in {
+            Intent.ASK_REPORT_QUESTION,
+            Intent.EXPLAIN_REPORT_SELECTION,
+            Intent.SHOW_EVIDENCE,
+            Intent.SHOW_SOURCES,
+            Intent.EXPLAIN_CALCULATION,
+            Intent.CHALLENGE_CONCLUSION,
+        }:
+            if db is None:
+                raise MissingDatabaseSessionError(
+                    "Report Q&A requires a database session"
+                )
+
+            return handle_report_qa_request(
+                request=request,
+                context=context,
+                db=db,
             )
 
         raise UnsupportedIntentError(

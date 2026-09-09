@@ -16,6 +16,11 @@ from app.schemas.analysis import (
     AnalysisRunCreateResponse,
 )
 from app.schemas.report import StructuredReport
+from app.schemas.report_action import (
+    ReportActionRequest,
+    ReportActionResponse,
+)
+from app.services.report_action_handler import handle_report_action
 from app.services.analysis_run import (
     AnalysisIdeaNotFoundError,
     AnalysisProfileNotFoundError,
@@ -173,4 +178,31 @@ def get_report_version(
             detail=f"Report version {version} not found for this idea",
         )
     return StructuredReport.model_validate(report.report_data)
+
+
+@router.post(
+    "/{idea_id}/report/action",
+    response_model=ReportActionResponse,
+)
+def execute_report_action(
+    idea_id: UUID,
+    request: ReportActionRequest,
+    db: DbSession,
+) -> ReportActionResponse:
+    report_record = db.scalar(
+        select(Report)
+        .where(Report.idea_id == idea_id)
+        .order_by(desc(Report.version))
+        .limit(1)
+    )
+    if report_record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found for this idea",
+        )
+    structured_report = StructuredReport.model_validate(
+        report_record.report_data
+    )
+    return handle_report_action(report=structured_report, request=request)
+
 

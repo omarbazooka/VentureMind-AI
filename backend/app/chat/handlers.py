@@ -204,3 +204,58 @@ def handle_intake_request(
         "Unsupported intake handler status: "
         f"{intake_result.status}"
     )
+
+
+def handle_report_qa_request(
+    *,
+    request: SubRequest,
+    context: WorkingContext,
+    db: Session,
+) -> HandlerResult:
+    from sqlalchemy import desc, select
+    from app.models.report import Report
+    from app.schemas.report import StructuredReport
+    from app.schemas.report_action import (
+        ReportActionRequest,
+        ReportActionType,
+    )
+    from app.services.report_action_handler import handle_report_action
+
+    report_record = db.scalar(
+        select(Report)
+        .where(Report.idea_id == context.idea_id)
+        .order_by(desc(Report.version))
+        .limit(1)
+    )
+    if report_record is None:
+        return HandlerResult(
+            response_text="No analysis report has been generated yet for this idea. Please run the analysis first."
+        )
+
+    structured_report = StructuredReport.model_validate(
+        report_record.report_data
+    )
+
+    intent_map = {
+        Intent.ASK_REPORT_QUESTION: ReportActionType.ASK_VENTUREMIND,
+        Intent.EXPLAIN_REPORT_SELECTION: ReportActionType.EXPLAIN,
+        Intent.SHOW_EVIDENCE: ReportActionType.SHOW_EVIDENCE,
+        Intent.SHOW_SOURCES: ReportActionType.SHOW_SOURCES,
+        Intent.EXPLAIN_CALCULATION: ReportActionType.EXPLAIN_CALCULATION,
+        Intent.CHALLENGE_CONCLUSION: ReportActionType.CHALLENGE_CONCLUSION,
+    }
+    action_type = intent_map.get(request.intent, ReportActionType.ASK_VENTUREMIND)
+    action_request = ReportActionRequest(
+        action=action_type,
+        target_section=request.payload.get("target_section"),
+        target_metric=request.payload.get("target_metric"),
+        question=context.current_user_message,
+    )
+    action_response = handle_report_action(
+        report=structured_report,
+        request=action_request,
+    )
+    return HandlerResult(
+        response_text=action_response.content,
+        status=ChatTurnStatus.COMPLETED,
+    )
