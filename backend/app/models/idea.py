@@ -20,6 +20,11 @@ class Idea(Base):
         nullable=False,
     )
 
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        nullable=True,
+        index=True,
+    )
+
     raw_initial_idea: Mapped[str] = mapped_column(
         Text,
         nullable=False,

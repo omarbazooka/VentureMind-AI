@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     groq_api_key: SecretStr | None = None
     firecrawl_api_key: SecretStr | None = None
 
+    # Supabase Auth Configuration
+    supabase_url: str | None = None
+    supabase_jwt_secret: SecretStr | None = None
+    supabase_jwt_audience: str = "authenticated"
+    enable_dev_auth_bypass: bool = False
+
     turn_understanding_model: str = "gemini-3.1-flash-lite"
     market_research_model: str = "gemini-3.5-flash-lite"
     competitor_intelligence_model: str = "gemini-3.5-flash-lite"
