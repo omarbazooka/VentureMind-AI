@@ -6,6 +6,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     HTTPException,
+    Query,
     status,
 )
 from pydantic import ValidationError
@@ -39,6 +40,11 @@ from app.schemas.report_action import (
     ReportActionRequest,
     ReportActionResponse,
 )
+from app.schemas.reanalysis import (
+    ReanalysisRequest,
+    ReanalysisResponse,
+    ReportComparisonResponse,
+)
 from app.services.analysis_run import (
     AnalysisIdeaNotFoundError,
     AnalysisProfileNotFoundError,
@@ -49,6 +55,10 @@ from app.services.analysis_run import (
 from app.services.finance_stage import (
     FinanceStageStateError,
     answer_finance_user_input,
+)
+from app.services.impact_resolver import (
+    compare_report_versions,
+    trigger_targeted_reanalysis,
 )
 from app.services.pipeline_runner import run_pipeline_sync
 from app.services.report_action_handler import handle_report_action
@@ -480,7 +490,56 @@ def execute_report_action(
     structured_report = StructuredReport.model_validate(
         report_record.report_data
     )
-    return handle_report_action(
-        report=structured_report,
-        request=request,
-    )
+    return handle_report_action(report=structured_report, request=request)
+
+
+@router.post(
+    "/{idea_id}/reanalyze",
+    response_model=ReanalysisResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def reanalyze_idea(
+    idea_id: UUID,
+    request: ReanalysisRequest,
+    background_tasks: BackgroundTasks,
+    db: DbSession,
+) -> ReanalysisResponse:
+    try:
+        response = trigger_targeted_reanalysis(
+            db=db,
+            idea_id=idea_id,
+            request=request,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    background_tasks.add_task(run_pipeline_sync, response.new_analysis_run_id)
+    return response
+
+
+@router.get(
+    "/{idea_id}/report/compare",
+    response_model=ReportComparisonResponse,
+)
+def compare_reports(
+    idea_id: UUID,
+    v1: int = Query(..., ge=1, description="Baseline report version"),
+    v2: int = Query(..., ge=1, description="Comparison report version"),
+    db: DbSession = None,
+) -> ReportComparisonResponse:
+    try:
+        return compare_report_versions(
+            db=db,
+            idea_id=idea_id,
+            v1_version=v1,
+            v2_version=v2,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
+
