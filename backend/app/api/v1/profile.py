@@ -10,6 +10,11 @@ from fastapi import (
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auth import (
+    AuthenticatedUser,
+    enforce_idea_ownership,
+    get_optional_user,
+)
 from app.core.database import get_db
 from app.models.idea import Idea
 from app.models.idea_profile import IdeaProfile
@@ -36,6 +41,10 @@ router = APIRouter(
 DbSession = Annotated[
     Session,
     Depends(get_db),
+]
+OptionalUser = Annotated[
+    AuthenticatedUser | None,
+    Depends(get_optional_user),
 ]
 
 
@@ -74,6 +83,7 @@ def _to_response(
 def get_profile(
     idea_id: UUID,
     db: DbSession,
+    user: OptionalUser = None,
 ) -> IdeaProfileResponse:
     idea = db.get(Idea, idea_id)
 
@@ -82,6 +92,11 @@ def get_profile(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Idea not found",
         )
+
+    enforce_idea_ownership(
+        owner_user_id=idea.owner_user_id,
+        user=user,
+    )
 
     profile = _get_latest_profile(
         db=db,
@@ -105,6 +120,7 @@ def update_profile(
     idea_id: UUID,
     payload: IdeaProfileUpdate,
     db: DbSession,
+    user: OptionalUser = None,
 ) -> IdeaProfileResponse:
     idea = db.get(Idea, idea_id)
 
@@ -113,6 +129,11 @@ def update_profile(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Idea not found",
         )
+
+    enforce_idea_ownership(
+        owner_user_id=idea.owner_user_id,
+        user=user,
+    )
 
     current_profile = _get_latest_profile(
         db=db,
