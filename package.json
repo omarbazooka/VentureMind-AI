@@ -1,0 +1,14 @@
+{
+  "name": "venturemind-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VentureMind AI — Autonomous Investment Analysis Engine",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "cd backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
+    "build": "npm --prefix frontend run build",
+    "start": "npm --prefix frontend run start",
+    "test:backend": "cd backend && uv run pytest"
+  }
+}
