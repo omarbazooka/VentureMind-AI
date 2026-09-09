@@ -8,6 +8,7 @@ from fastapi import (
     HTTPException,
     status,
 )
+from pydantic import ValidationError
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
@@ -28,7 +29,7 @@ from app.schemas.analysis import (
     PendingInputSummary,
     StageProgressItem,
 )
-from app.schemas.finance import FinancialInputName
+from app.schemas.finance import FinancialInputName, FinancialPeriod
 from app.schemas.finance_runtime import (
     FinanceUserAnswerMode,
     FinanceUserInputAnswer,
@@ -38,7 +39,6 @@ from app.schemas.report_action import (
     ReportActionRequest,
     ReportActionResponse,
 )
-from app.services.report_action_handler import handle_report_action
 from app.services.analysis_run import (
     AnalysisIdeaNotFoundError,
     AnalysisProfileNotFoundError,
@@ -46,8 +46,12 @@ from app.services.analysis_run import (
     AnalysisRunAlreadyActiveError,
     start_analysis_run,
 )
-from app.services.finance_stage import answer_finance_user_input
+from app.services.finance_stage import (
+    FinanceStageStateError,
+    answer_finance_user_input,
+)
 from app.services.pipeline_runner import run_pipeline_sync
+from app.services.report_action_handler import handle_report_action
 
 
 router = APIRouter(
@@ -90,46 +94,30 @@ def start_analysis(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "message": (
-                    "Idea profile is not ready "
-                    "for analysis"
-                ),
-                **(
-                    exc.readiness_result
-                    .model_dump(mode="json")
-                ),
+                "message": "Idea profile is not ready for analysis",
+                **exc.readiness_result.model_dump(mode="json"),
             },
         ) from exc
     except AnalysisRunAlreadyActiveError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "message": (
-                    "An analysis run is already "
-                    "active for this idea"
-                ),
-                "run_id": str(
-                    exc.analysis_run.id
-                ),
-                "status": (
-                    exc.analysis_run.status
-                ),
+                "message": "An analysis run is already active for this idea",
+                "run_id": str(exc.analysis_run.id),
+                "status": exc.analysis_run.status,
             },
         ) from exc
 
     db.commit()
     db.refresh(analysis_run)
 
-    # Launch pipeline runner in background
     background_tasks.add_task(run_pipeline_sync, analysis_run.id)
 
     return AnalysisRunCreateResponse(
         run_id=analysis_run.id,
         idea_id=analysis_run.idea_id,
         profile_id=analysis_run.profile_id,
-        profile_version=(
-            analysis_run.profile_version
-        ),
+        profile_version=analysis_run.profile_version,
         status=analysis_run.status,
         created_at=analysis_run.created_at,
     )
@@ -172,22 +160,30 @@ def get_analysis_progress(
     )
 
     completed_stages = [
-        sr.stage
-        for sr in stage_runs
-        if sr.status == AnalysisStageStatus.COMPLETED.value
+        stage_run.stage
+        for stage_run in stage_runs
+        if stage_run.status == AnalysisStageStatus.COMPLETED.value
     ]
 
+    # Report a stage that is actually active before falling back to queued work.
+    # This avoids showing a later PENDING stage while an earlier stage is RUNNING.
     current_stage = None
-    for sr in reversed(stage_runs):
-        if sr.status in (
-            AnalysisStageStatus.RUNNING.value,
-            AnalysisStageStatus.PAUSED_FOR_USER.value,
-            AnalysisStageStatus.PENDING.value,
-        ):
-            current_stage = sr.stage
+    for active_status in (
+        AnalysisStageStatus.PAUSED_FOR_USER.value,
+        AnalysisStageStatus.RUNNING.value,
+        AnalysisStageStatus.PENDING.value,
+    ):
+        current_stage_run = next(
+            (
+                stage_run
+                for stage_run in stage_runs
+                if stage_run.status == active_status
+            ),
+            None,
+        )
+        if current_stage_run is not None:
+            current_stage = current_stage_run.stage
             break
-    if current_stage is None and stage_runs:
-        current_stage = stage_runs[-1].stage
 
     pending_input_summary = None
     if run.status == AnalysisRunStatus.PAUSED_FOR_USER.value:
@@ -200,21 +196,21 @@ def get_analysis_progress(
             .order_by(desc(AnalysisRunInput.created_at))
             .limit(1)
         )
-        if pending_input:
-            req_data = pending_input.request_data or {}
+        if pending_input is not None:
+            request_data = pending_input.request_data or {}
             pending_input_summary = PendingInputSummary(
                 input_id=pending_input.id,
                 stage_run_id=pending_input.stage_run_id,
                 input_name=pending_input.input_name,
-                question=req_data.get(
+                question=request_data.get(
                     "question",
                     f"Input required for {pending_input.input_name}",
                 ),
-                options=req_data.get("options", []),
-                allow_custom=req_data.get("allow_custom", True),
-                currency=req_data.get("currency"),
-                unit_label=req_data.get("unit_label"),
-                period=req_data.get("period"),
+                options=request_data.get("options", []),
+                allow_custom=request_data.get("allow_custom", True),
+                currency=request_data.get("currency"),
+                unit_label=request_data.get("unit_label"),
+                period=request_data.get("period"),
             )
 
     latest_report = db.scalar(
@@ -232,19 +228,19 @@ def get_analysis_progress(
         completed_stages=list(dict.fromkeys(completed_stages)),
         stage_runs=[
             StageProgressItem(
-                stage=sr.stage,
-                attempt=sr.attempt,
-                status=sr.status,
-                started_at=sr.started_at,
-                completed_at=sr.completed_at,
-                error_code=sr.error_code,
-                error_message=sr.error_message,
+                stage=stage_run.stage,
+                attempt=stage_run.attempt,
+                status=stage_run.status,
+                started_at=stage_run.started_at,
+                completed_at=stage_run.completed_at,
+                error_code=stage_run.error_code,
+                error_message=stage_run.error_message,
             )
-            for sr in stage_runs
+            for stage_run in stage_runs
         ],
         pending_input=pending_input_summary,
         has_report=latest_report is not None,
-        report_version=latest_report.version if latest_report else None,
+        report_version=(latest_report.version if latest_report else None),
         error_code=run.error_code,
         error_message=run.error_message,
     )
@@ -288,20 +284,20 @@ def get_pending_input(
             detail="No pending input found for this analysis run",
         )
 
-    req_data = pending_input.request_data or {}
+    request_data = pending_input.request_data or {}
     return PendingInputSummary(
         input_id=pending_input.id,
         stage_run_id=pending_input.stage_run_id,
         input_name=pending_input.input_name,
-        question=req_data.get(
+        question=request_data.get(
             "question",
             f"Input required for {pending_input.input_name}",
         ),
-        options=req_data.get("options", []),
-        allow_custom=req_data.get("allow_custom", True),
-        currency=req_data.get("currency"),
-        unit_label=req_data.get("unit_label"),
-        period=req_data.get("period"),
+        options=request_data.get("options", []),
+        allow_custom=request_data.get("allow_custom", True),
+        currency=request_data.get("currency"),
+        unit_label=request_data.get("unit_label"),
+        period=request_data.get("period"),
     )
 
 
@@ -336,37 +332,52 @@ def answer_analysis_input(
             detail="Input is not in PENDING state",
         )
 
-    input_name = FinancialInputName(run_input.input_name)
-    period_enum = FinancialPeriod(body.period) if body.period else None
-    if body.choice is not None:
-        answer = FinanceUserInputAnswer(
-            input_name=input_name,
-            answer_mode=FinanceUserAnswerMode.SELECTED_OPTION,
-            selected_option_id=body.choice,
-        )
-    elif body.value is not None:
-        answer = FinanceUserInputAnswer(
-            input_name=input_name,
-            answer_mode=FinanceUserAnswerMode.CUSTOM,
-            value=body.value,
-            currency=body.currency,
-            unit_label=body.unit_label,
-            period=period_enum,
-        )
-    else:
+    if (body.choice is None) == (body.value is None):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Either choice or value must be provided to answer input",
+            detail="Provide exactly one of choice or value",
         )
 
-    answer_finance_user_input(
-        db=db,
-        run_input_id=input_id,
-        answer=answer,
-        source_message_id=body.source_message_id,
-    )
-    db.commit()
+    try:
+        input_name = FinancialInputName(run_input.input_name)
+        period = FinancialPeriod(body.period) if body.period else None
 
+        if body.choice is not None:
+            answer = FinanceUserInputAnswer(
+                input_name=input_name,
+                answer_mode=FinanceUserAnswerMode.SELECTED_OPTION,
+                selected_option_id=body.choice,
+            )
+        else:
+            answer = FinanceUserInputAnswer(
+                input_name=input_name,
+                answer_mode=FinanceUserAnswerMode.CUSTOM,
+                value=body.value,
+                currency=body.currency,
+                unit_label=body.unit_label,
+                period=period,
+            )
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid Finance input answer: {exc}",
+        ) from exc
+
+    try:
+        answer_finance_user_input(
+            db=db,
+            run_input_id=input_id,
+            answer=answer,
+            source_message_id=body.source_message_id,
+        )
+    except FinanceStageStateError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    db.commit()
     background_tasks.add_task(run_pipeline_sync, run_input.analysis_run_id)
 
     return AnswerInputResponse(
@@ -375,7 +386,6 @@ def answer_analysis_input(
         analysis_run_status="RUNNING",
         message="Input accepted; analysis resumed in background",
     )
-
 
 
 @router.get(
@@ -414,13 +424,13 @@ def list_reports(
     ).all()
     return [
         {
-            "id": str(r.id),
-            "idea_id": str(r.idea_id),
-            "analysis_run_id": str(r.analysis_run_id),
-            "version": r.version,
-            "created_at": r.created_at,
+            "id": str(report.id),
+            "idea_id": str(report.idea_id),
+            "analysis_run_id": str(report.analysis_run_id),
+            "version": report.version,
+            "created_at": report.created_at,
         }
-        for r in reports
+        for report in reports
     ]
 
 
@@ -470,6 +480,7 @@ def execute_report_action(
     structured_report = StructuredReport.model_validate(
         report_record.report_data
     )
-    return handle_report_action(report=structured_report, request=request)
-
-
+    return handle_report_action(
+        report=structured_report,
+        request=request,
+    )
