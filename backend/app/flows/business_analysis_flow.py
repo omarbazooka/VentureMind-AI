@@ -17,6 +17,7 @@ from app.schemas.analysis import (
     AnalysisStageStatus,
 )
 from app.schemas.intake import ProfileReadinessStatus
+from app.schemas.validation import ValidationAnalysis
 from app.services.intake_profile import evaluate_profile_readiness
 from app.services.research_join import (
     ResearchJoinEvaluation,
@@ -525,3 +526,279 @@ class BusinessAnalysisFlow:
             db=db,
             analysis_run_id=run_id,
         )
+
+    def _require_completed_risk_result(
+        self,
+        *,
+        db: Session,
+        analysis_run_id: UUID,
+    ) -> AnalysisResult:
+        stage_statement = (
+            select(AnalysisStageRun)
+            .where(
+                AnalysisStageRun.analysis_run_id == analysis_run_id,
+                AnalysisStageRun.stage == AnalysisStage.RISK.value,
+                AnalysisStageRun.status == AnalysisStageStatus.COMPLETED.value,
+            )
+            .order_by(AnalysisStageRun.attempt.desc())
+        )
+        risk_stage_run = db.scalar(stage_statement)
+        if risk_stage_run is None:
+            raise BusinessAnalysisRunStateError(
+                "Validation cannot be scheduled before Risk is COMPLETED"
+            )
+
+        result_statement = select(AnalysisResult).where(
+            AnalysisResult.analysis_run_id == analysis_run_id,
+            AnalysisResult.stage_run_id == risk_stage_run.id,
+            AnalysisResult.stage == AnalysisStage.RISK.value,
+        )
+        risk_result = db.scalar(result_statement)
+        if risk_result is None:
+            raise BusinessAnalysisRunStateError(
+                "Completed Risk stage has no persisted result"
+            )
+
+        return risk_result
+
+    def _ensure_validation_stage_run(
+        self,
+        *,
+        db: Session,
+        analysis_run_id: UUID,
+    ) -> AnalysisStageRun:
+        analysis_run = self._load_run_for_update(
+            db=db,
+            run_id=analysis_run_id,
+        )
+
+        if analysis_run.status != AnalysisRunStatus.RUNNING.value:
+            raise BusinessAnalysisRunStateError(
+                "Independent Validation can only be scheduled for a RUNNING AnalysisRun"
+            )
+
+        statement = select(AnalysisStageRun).where(
+            AnalysisStageRun.analysis_run_id == analysis_run_id,
+            AnalysisStageRun.stage == AnalysisStage.INDEPENDENT_VALIDATION.value,
+            AnalysisStageRun.attempt == 1,
+        )
+        existing_stage_run = db.scalar(statement)
+        if existing_stage_run is not None:
+            return existing_stage_run
+
+        validation_stage_run = AnalysisStageRun(
+            analysis_run_id=analysis_run_id,
+            stage=AnalysisStage.INDEPENDENT_VALIDATION.value,
+            attempt=1,
+            status=AnalysisStageStatus.PENDING.value,
+        )
+        db.add(validation_stage_run)
+        db.flush()
+        return validation_stage_run
+
+    def advance_risk(
+        self,
+        *,
+        db: Session,
+        run_id: UUID,
+    ) -> AnalysisStageRun:
+        analysis_run = self._load_run_for_update(
+            db=db,
+            run_id=run_id,
+        )
+
+        if analysis_run.status != AnalysisRunStatus.RUNNING.value:
+            raise BusinessAnalysisRunStateError(
+                "Risk can only advance while AnalysisRun is RUNNING"
+            )
+
+        self._require_completed_risk_result(
+            db=db,
+            analysis_run_id=run_id,
+        )
+        return self._ensure_validation_stage_run(
+            db=db,
+            analysis_run_id=run_id,
+        )
+
+    def _require_completed_validation_result(
+        self,
+        *,
+        db: Session,
+        analysis_run_id: UUID,
+    ) -> AnalysisResult:
+        stage_statement = (
+            select(AnalysisStageRun)
+            .where(
+                AnalysisStageRun.analysis_run_id == analysis_run_id,
+                AnalysisStageRun.stage == AnalysisStage.INDEPENDENT_VALIDATION.value,
+                AnalysisStageRun.status == AnalysisStageStatus.COMPLETED.value,
+            )
+            .order_by(AnalysisStageRun.attempt.desc())
+        )
+        val_stage_run = db.scalar(stage_statement)
+        if val_stage_run is None:
+            raise BusinessAnalysisRunStateError(
+                "Investment Committee cannot be scheduled before Validation is COMPLETED"
+            )
+
+        result_statement = select(AnalysisResult).where(
+            AnalysisResult.analysis_run_id == analysis_run_id,
+            AnalysisResult.stage_run_id == val_stage_run.id,
+            AnalysisResult.stage == AnalysisStage.INDEPENDENT_VALIDATION.value,
+        )
+        val_result = db.scalar(result_statement)
+        if val_result is None:
+            raise BusinessAnalysisRunStateError(
+                "Completed Validation stage has no persisted result"
+            )
+
+        return val_result
+
+    def _ensure_decision_stage_run(
+        self,
+        *,
+        db: Session,
+        analysis_run_id: UUID,
+    ) -> AnalysisStageRun:
+        analysis_run = self._load_run_for_update(
+            db=db,
+            run_id=analysis_run_id,
+        )
+
+        if analysis_run.status != AnalysisRunStatus.RUNNING.value:
+            raise BusinessAnalysisRunStateError(
+                "Investment Committee can only be scheduled for a RUNNING AnalysisRun"
+            )
+
+        statement = select(AnalysisStageRun).where(
+            AnalysisStageRun.analysis_run_id == analysis_run_id,
+            AnalysisStageRun.stage == AnalysisStage.INVESTMENT_COMMITTEE.value,
+            AnalysisStageRun.attempt == 1,
+        )
+        existing_stage_run = db.scalar(statement)
+        if existing_stage_run is not None:
+            return existing_stage_run
+
+        decision_stage_run = AnalysisStageRun(
+            analysis_run_id=analysis_run_id,
+            stage=AnalysisStage.INVESTMENT_COMMITTEE.value,
+            attempt=1,
+            status=AnalysisStageStatus.PENDING.value,
+        )
+        db.add(decision_stage_run)
+        db.flush()
+        return decision_stage_run
+
+    def advance_validation(
+        self,
+        *,
+        db: Session,
+        run_id: UUID,
+    ) -> AnalysisStageRun | None:
+        analysis_run = self._load_run_for_update(
+            db=db,
+            run_id=run_id,
+        )
+
+        if analysis_run.status != AnalysisRunStatus.RUNNING.value:
+            raise BusinessAnalysisRunStateError(
+                "Validation can only advance while AnalysisRun is RUNNING"
+            )
+
+        val_result = self._require_completed_validation_result(
+            db=db,
+            analysis_run_id=run_id,
+        )
+        val_data = ValidationAnalysis.model_validate(val_result.result_data)
+
+        # Check for bounded targeted retry via deterministic policy
+        if val_data.retry_stages:
+            for stage_to_retry in val_data.retry_stages:
+                stage_runs = list(
+                    db.scalars(
+                        select(AnalysisStageRun)
+                        .where(
+                            AnalysisStageRun.analysis_run_id == run_id,
+                            AnalysisStageRun.stage == stage_to_retry.value,
+                        )
+                        .order_by(AnalysisStageRun.attempt.desc())
+                    ).all()
+                )
+                latest_attempt = stage_runs[0].attempt if stage_runs else 1
+                if latest_attempt < 3:
+                    retry_run = AnalysisStageRun(
+                        analysis_run_id=run_id,
+                        stage=stage_to_retry.value,
+                        attempt=latest_attempt + 1,
+                        status=AnalysisStageStatus.PENDING.value,
+                    )
+                    db.add(retry_run)
+                    db.flush()
+                    return retry_run
+
+        if not val_data.can_proceed:
+            raise BusinessAnalysisRunStateError(
+                "Validation failed and does not permit proceeding to Investment Committee"
+            )
+
+        return self._ensure_decision_stage_run(
+            db=db,
+            analysis_run_id=run_id,
+        )
+
+    def _require_completed_decision_result(
+        self,
+        *,
+        db: Session,
+        analysis_run_id: UUID,
+    ) -> AnalysisResult:
+        stage_statement = (
+            select(AnalysisStageRun)
+            .where(
+                AnalysisStageRun.analysis_run_id == analysis_run_id,
+                AnalysisStageRun.stage == AnalysisStage.INVESTMENT_COMMITTEE.value,
+                AnalysisStageRun.status == AnalysisStageStatus.COMPLETED.value,
+            )
+            .order_by(AnalysisStageRun.attempt.desc())
+        )
+        dec_stage_run = db.scalar(stage_statement)
+        if dec_stage_run is None:
+            raise BusinessAnalysisRunStateError(
+                "Decision stage is not COMPLETED"
+            )
+
+        result_statement = select(AnalysisResult).where(
+            AnalysisResult.analysis_run_id == analysis_run_id,
+            AnalysisResult.stage_run_id == dec_stage_run.id,
+            AnalysisResult.stage == AnalysisStage.INVESTMENT_COMMITTEE.value,
+        )
+        dec_result = db.scalar(result_statement)
+        if dec_result is None:
+            raise BusinessAnalysisRunStateError(
+                "Completed Investment Committee stage has no persisted result"
+            )
+
+        return dec_result
+
+    def advance_decision(
+        self,
+        *,
+        db: Session,
+        run_id: UUID,
+    ) -> AnalysisResult:
+        analysis_run = self._load_run_for_update(
+            db=db,
+            run_id=run_id,
+        )
+
+        if analysis_run.status != AnalysisRunStatus.RUNNING.value:
+            raise BusinessAnalysisRunStateError(
+                "Decision can only advance while AnalysisRun is RUNNING"
+            )
+
+        return self._require_completed_decision_result(
+            db=db,
+            analysis_run_id=run_id,
+        )
+
