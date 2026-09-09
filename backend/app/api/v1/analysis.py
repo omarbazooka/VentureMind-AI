@@ -13,6 +13,11 @@ from pydantic import ValidationError
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
+from app.core.auth import (
+    AuthenticatedUser,
+    enforce_idea_ownership,
+    get_optional_user,
+)
 from app.core.database import get_db
 from app.models.analysis_run import AnalysisRun
 from app.models.analysis_run_input import AnalysisRunInput
@@ -73,6 +78,30 @@ DbSession = Annotated[
     Session,
     Depends(get_db),
 ]
+OptionalUser = Annotated[
+    AuthenticatedUser | None,
+    Depends(get_optional_user),
+]
+
+
+def _authorize_idea(
+    *,
+    db: Session,
+    idea_id: UUID,
+    user: AuthenticatedUser | None,
+) -> Idea:
+    idea = db.get(Idea, idea_id)
+    if idea is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Idea not found",
+        )
+
+    enforce_idea_ownership(
+        owner_user_id=idea.owner_user_id,
+        user=user,
+    )
+    return idea
 
 
 @router.post(
@@ -84,7 +113,14 @@ def start_analysis(
     idea_id: UUID,
     db: DbSession,
     background_tasks: BackgroundTasks,
+    user: OptionalUser = None,
 ) -> AnalysisRunCreateResponse:
+    _authorize_idea(
+        db=db,
+        idea_id=idea_id,
+        user=user,
+    )
+
     try:
         analysis_run = start_analysis_run(
             db=db,
@@ -140,13 +176,13 @@ def start_analysis(
 def get_analysis_progress(
     idea_id: UUID,
     db: DbSession,
+    user: OptionalUser = None,
 ) -> AnalysisProgressResponse:
-    idea = db.get(Idea, idea_id)
-    if idea is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Idea not found",
-        )
+    _authorize_idea(
+        db=db,
+        idea_id=idea_id,
+        user=user,
+    )
 
     run = db.scalar(
         select(AnalysisRun)
@@ -263,7 +299,14 @@ def get_analysis_progress(
 def get_pending_input(
     idea_id: UUID,
     db: DbSession,
+    user: OptionalUser = None,
 ) -> PendingInputSummary:
+    _authorize_idea(
+        db=db,
+        idea_id=idea_id,
+        user=user,
+    )
+
     run = db.scalar(
         select(AnalysisRun)
         .where(
@@ -321,7 +364,14 @@ def answer_analysis_input(
     body: AnswerInputRequest,
     background_tasks: BackgroundTasks,
     db: DbSession,
+    user: OptionalUser = None,
 ) -> AnswerInputResponse:
+    _authorize_idea(
+        db=db,
+        idea_id=idea_id,
+        user=user,
+    )
+
     run_input = db.get(AnalysisRunInput, input_id)
     if run_input is None:
         raise HTTPException(
@@ -405,7 +455,14 @@ def answer_analysis_input(
 def get_latest_report(
     idea_id: UUID,
     db: DbSession,
+    user: OptionalUser = None,
 ) -> StructuredReport:
+    _authorize_idea(
+        db=db,
+        idea_id=idea_id,
+        user=user,
+    )
+
     report = db.scalar(
         select(Report)
         .where(Report.idea_id == idea_id)
@@ -426,7 +483,14 @@ def get_latest_report(
 def list_reports(
     idea_id: UUID,
     db: DbSession,
+    user: OptionalUser = None,
 ) -> list[dict[str, Any]]:
+    _authorize_idea(
+        db=db,
+        idea_id=idea_id,
+        user=user,
+    )
+
     reports = db.scalars(
         select(Report)
         .where(Report.idea_id == idea_id)
@@ -452,7 +516,14 @@ def get_report_version(
     idea_id: UUID,
     version: int,
     db: DbSession,
+    user: OptionalUser = None,
 ) -> StructuredReport:
+    _authorize_idea(
+        db=db,
+        idea_id=idea_id,
+        user=user,
+    )
+
     report = db.scalar(
         select(Report).where(
             Report.idea_id == idea_id,
@@ -475,7 +546,14 @@ def execute_report_action(
     idea_id: UUID,
     request: ReportActionRequest,
     db: DbSession,
+    user: OptionalUser = None,
 ) -> ReportActionResponse:
+    _authorize_idea(
+        db=db,
+        idea_id=idea_id,
+        user=user,
+    )
+
     report_record = db.scalar(
         select(Report)
         .where(Report.idea_id == idea_id)
@@ -503,7 +581,14 @@ def reanalyze_idea(
     request: ReanalysisRequest,
     background_tasks: BackgroundTasks,
     db: DbSession,
+    user: OptionalUser = None,
 ) -> ReanalysisResponse:
+    _authorize_idea(
+        db=db,
+        idea_id=idea_id,
+        user=user,
+    )
+
     try:
         response = trigger_targeted_reanalysis(
             db=db,
@@ -514,7 +599,7 @@ def reanalyze_idea(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
-        )
+        ) from exc
 
     background_tasks.add_task(run_pipeline_sync, response.new_analysis_run_id)
     return response
@@ -526,10 +611,17 @@ def reanalyze_idea(
 )
 def compare_reports(
     idea_id: UUID,
+    db: DbSession,
+    user: OptionalUser = None,
     v1: int = Query(..., ge=1, description="Baseline report version"),
     v2: int = Query(..., ge=1, description="Comparison report version"),
-    db: DbSession = None,
 ) -> ReportComparisonResponse:
+    _authorize_idea(
+        db=db,
+        idea_id=idea_id,
+        user=user,
+    )
+
     try:
         return compare_report_versions(
             db=db,
@@ -541,5 +633,4 @@ def compare_reports(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
-        )
-
+        ) from exc
