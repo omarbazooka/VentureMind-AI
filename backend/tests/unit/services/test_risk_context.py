@@ -7,16 +7,24 @@ import pytest
 from app.schemas.analysis import (
     AnalysisProfileSnapshot,
     AnalysisStage,
+    AnalysisStageStatus,
 )
 from app.schemas.analytics import DecisionAnalyticsResult
 from app.schemas.finance import (
+    FinancialAssumption,
     FinancialAssumptionSet,
+    FinancialInputName,
     FinancialScenarioBundle,
     FinancialScenarioKind,
     FinancialScenarioResult,
 )
 from app.schemas.intake import ProfileReadinessStatus
-from app.schemas.research import ResearchEvidenceGateResult
+from app.schemas.research import (
+    ResearchEvidenceGateResult,
+    ResearchEvidenceQuality,
+    ResearchGateDecision,
+    ResearchStageGateAssessment,
+)
 from app.schemas.strategy import BusinessStrategyAnalysis
 from app.services.risk_context import (
     RiskContextDependencyError,
@@ -24,43 +32,79 @@ from app.services.risk_context import (
 )
 
 
+def _unknown_assumption(
+    input_name: FinancialInputName,
+) -> FinancialAssumption:
+    return FinancialAssumption(
+        input_name=input_name,
+        rationale="Unknown test fixture input.",
+    )
+
+
+def _dummy_assumptions(
+    scenario: FinancialScenarioKind,
+) -> FinancialAssumptionSet:
+    return FinancialAssumptionSet(
+        scenario=scenario,
+        selling_price_per_unit=_unknown_assumption(
+            FinancialInputName.SELLING_PRICE_PER_UNIT
+        ),
+        sales_volume=_unknown_assumption(
+            FinancialInputName.SALES_VOLUME
+        ),
+        variable_cost_per_unit=_unknown_assumption(
+            FinancialInputName.VARIABLE_COST_PER_UNIT
+        ),
+        fixed_costs=_unknown_assumption(
+            FinancialInputName.FIXED_COSTS
+        ),
+    )
+
+
 def _dummy_result(
     scenario: FinancialScenarioKind,
 ) -> FinancialScenarioResult:
-    assumptions = FinancialAssumptionSet.model_construct(
+    return FinancialScenarioResult(
         scenario=scenario,
-    )
-    return FinancialScenarioResult.model_construct(
-        scenario=scenario,
-        assumptions=assumptions,
-        metrics=[],
-        missing_critical_inputs=[],
-        limitations=[],
+        assumptions=_dummy_assumptions(scenario),
     )
 
 
 def _dummy_bundle() -> FinancialScenarioBundle:
-    return FinancialScenarioBundle.model_construct(
+    return FinancialScenarioBundle(
         base=_dummy_result(FinancialScenarioKind.BASE),
         upside=_dummy_result(FinancialScenarioKind.UPSIDE),
         downside=_dummy_result(FinancialScenarioKind.DOWNSIDE),
-        comparisons=[],
-        limitations=[],
+    )
+
+
+def _insufficient_research_gate() -> ResearchEvidenceGateResult:
+    stages = [
+        AnalysisStage.MARKET_RESEARCH,
+        AnalysisStage.COMPETITOR_INTELLIGENCE,
+        AnalysisStage.CUSTOMER_INTELLIGENCE,
+    ]
+    assessments = [
+        ResearchStageGateAssessment(
+            stage=stage,
+            attempt=1,
+            stage_status=AnalysisStageStatus.COMPLETED,
+            evidence_quality=ResearchEvidenceQuality.INSUFFICIENT,
+        )
+        for stage in stages
+    ]
+    return ResearchEvidenceGateResult(
+        decision=ResearchGateDecision.INSUFFICIENT,
+        can_proceed=True,
+        assessments=assessments,
+        insufficient_stages=stages,
     )
 
 
 def test_builds_risk_context_from_authoritative_upstream_results():
     run_id = uuid4()
     finance_stage_id = uuid4()
-    research_stages = [
-        AnalysisStage.MARKET_RESEARCH,
-        AnalysisStage.COMPETITOR_INTELLIGENCE,
-        AnalysisStage.CUSTOMER_INTELLIGENCE,
-    ]
-    gate = ResearchEvidenceGateResult.model_construct(
-        can_proceed=True,
-        insufficient_stages=research_stages,
-    )
+    gate = _insufficient_research_gate()
     evaluation = SimpleNamespace(
         gate=gate,
         results={},
@@ -82,7 +126,7 @@ def test_builds_risk_context_from_authoritative_upstream_results():
     finance_bundle = _dummy_bundle()
     finance_result = SimpleNamespace(
         stage_run_id=finance_stage_id,
-        result_data=finance_bundle,
+        result_data=finance_bundle.model_dump(mode="json"),
     )
     analytics_result = SimpleNamespace(
         stage_run_id=uuid4(),
