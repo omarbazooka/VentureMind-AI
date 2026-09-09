@@ -5,6 +5,7 @@ import pytest
 from app.schemas.analysis import (
     AnalysisProfileSnapshot,
     AnalysisStage,
+    AnalysisStageStatus,
 )
 from app.schemas.analytics import (
     DecisionAnalyticsResult,
@@ -12,9 +13,13 @@ from app.schemas.analytics import (
     DecisionKPIName,
     InputSensitivityResult,
     SensitivityAnalysisResult,
+    SensitivityMetricImpact,
+    SensitivityPoint,
 )
 from app.schemas.finance import (
     CalculatedFinancialMetric,
+    FinancialAssumption,
+    FinancialAssumptionSet,
     FinancialInputName,
     FinancialMetricName,
     FinancialPeriod,
@@ -29,6 +34,8 @@ from app.schemas.research import (
     ResearchEvidenceGateResult,
     ResearchEvidenceQuality,
     ResearchEvidenceSource,
+    ResearchGateDecision,
+    ResearchStageGateAssessment,
 )
 from app.schemas.risk import (
     RiskCategory,
@@ -46,12 +53,41 @@ from app.services.risk_grounding import (
 )
 
 
+def _unknown_assumption(
+    input_name: FinancialInputName,
+) -> FinancialAssumption:
+    return FinancialAssumption(
+        input_name=input_name,
+        rationale="Unknown test fixture input.",
+    )
+
+
+def _assumptions(
+    scenario: FinancialScenarioKind,
+) -> FinancialAssumptionSet:
+    return FinancialAssumptionSet(
+        scenario=scenario,
+        selling_price_per_unit=_unknown_assumption(
+            FinancialInputName.SELLING_PRICE_PER_UNIT
+        ),
+        sales_volume=_unknown_assumption(
+            FinancialInputName.SALES_VOLUME
+        ),
+        variable_cost_per_unit=_unknown_assumption(
+            FinancialInputName.VARIABLE_COST_PER_UNIT
+        ),
+        fixed_costs=_unknown_assumption(
+            FinancialInputName.FIXED_COSTS
+        ),
+    )
+
+
 def _finance_result(
     scenario: FinancialScenarioKind,
 ) -> FinancialScenarioResult:
-    return FinancialScenarioResult.model_construct(
+    return FinancialScenarioResult(
         scenario=scenario,
-        assumptions=None,
+        assumptions=_assumptions(scenario),
         metrics=[
             CalculatedFinancialMetric(
                 metric_name=FinancialMetricName.OPERATING_RESULT,
@@ -63,8 +99,52 @@ def _finance_result(
                 period=FinancialPeriod.MONTHLY,
             )
         ],
-        missing_critical_inputs=[],
-        limitations=[],
+    )
+
+
+def _insufficient_research_gate() -> ResearchEvidenceGateResult:
+    stages = [
+        AnalysisStage.MARKET_RESEARCH,
+        AnalysisStage.COMPETITOR_INTELLIGENCE,
+        AnalysisStage.CUSTOMER_INTELLIGENCE,
+    ]
+    assessments = [
+        ResearchStageGateAssessment(
+            stage=stage,
+            attempt=1,
+            stage_status=AnalysisStageStatus.COMPLETED,
+            evidence_quality=ResearchEvidenceQuality.INSUFFICIENT,
+        )
+        for stage in stages
+    ]
+    return ResearchEvidenceGateResult(
+        decision=ResearchGateDecision.INSUFFICIENT,
+        can_proceed=True,
+        assessments=assessments,
+        insufficient_stages=stages,
+    )
+
+
+def _sensitivity_point(
+    *,
+    change_percent: int,
+    stressed_value: int,
+) -> SensitivityPoint:
+    return SensitivityPoint(
+        input_name=FinancialInputName.SELLING_PRICE_PER_UNIT,
+        input_change_percent=change_percent,
+        impacts=[
+            SensitivityMetricImpact(
+                metric_name=FinancialMetricName.OPERATING_RESULT,
+                base_value=100,
+                stressed_value=stressed_value,
+                absolute_change=stressed_value - 100,
+                relative_change_percent=stressed_value - 100,
+                currency="EGP",
+                unit="money",
+                period=FinancialPeriod.MONTHLY,
+            )
+        ],
     )
 
 
@@ -83,34 +163,29 @@ def make_context() -> RiskAnalysisContext:
         evidence_quality=ResearchEvidenceQuality.INSUFFICIENT,
         limitations=["Market evidence is limited."],
     )
-    research_stages = [
-        AnalysisStage.MARKET_RESEARCH,
-        AnalysisStage.COMPETITOR_INTELLIGENCE,
-        AnalysisStage.CUSTOMER_INTELLIGENCE,
-    ]
-    gate = ResearchEvidenceGateResult.model_construct(
-        can_proceed=True,
-        insufficient_stages=research_stages,
-    )
-    bundle = FinancialScenarioBundle.model_construct(
+    gate = _insufficient_research_gate()
+    bundle = FinancialScenarioBundle(
         base=_finance_result(FinancialScenarioKind.BASE),
         upside=_finance_result(FinancialScenarioKind.UPSIDE),
         downside=_finance_result(FinancialScenarioKind.DOWNSIDE),
-        comparisons=[],
-        limitations=[],
     )
-    sensitivity_item = InputSensitivityResult.model_construct(
+    sensitivity_item = InputSensitivityResult(
         input_name=FinancialInputName.SELLING_PRICE_PER_UNIT,
-        decrease=None,
-        increase=None,
+        decrease=_sensitivity_point(
+            change_percent=-10,
+            stressed_value=75,
+        ),
+        increase=_sensitivity_point(
+            change_percent=10,
+            stressed_value=125,
+        ),
         max_abs_ranking_metric_change_percent=25,
         rank=1,
     )
-    sensitivity = SensitivityAnalysisResult.model_construct(
+    sensitivity = SensitivityAnalysisResult(
         shock_percent=10,
         ranking_metric=FinancialMetricName.OPERATING_RESULT,
         inputs=[sensitivity_item],
-        limitations=[],
     )
     analytics = DecisionAnalyticsResult(
         finance_stage_run_id=finance_stage_run_id,
