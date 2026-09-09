@@ -3,22 +3,31 @@ from typing import Annotated
 from uuid import UUID
 
 import jwt
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Header, HTTPException, status
 from pydantic import BaseModel
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Cached JWKS client instance
+# Cached JWKS client instance.
 _jwk_client: jwt.PyJWKClient | None = None
+
+
+def _expected_issuer() -> str | None:
+    if not settings.supabase_url:
+        return None
+    return f"{settings.supabase_url.rstrip('/')}/auth/v1"
 
 
 def get_jwk_client() -> jwt.PyJWKClient | None:
     global _jwk_client
-    if _jwk_client is None and settings.supabase_url:
-        jwks_url = f"{settings.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
-        _jwk_client = jwt.PyJWKClient(jwks_url, cache_keys=True)
+    issuer = _expected_issuer()
+    if _jwk_client is None and issuer:
+        _jwk_client = jwt.PyJWKClient(
+            f"{issuer}/.well-known/jwks.json",
+            cache_keys=True,
+        )
     return _jwk_client
 
 
@@ -47,8 +56,33 @@ def enforce_idea_ownership(
         )
 
 
+def _decode_verified_token(
+    *,
+    token: str,
+    key: object,
+    algorithms: list[str],
+) -> dict:
+    issuer = _expected_issuer()
+    if issuer is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Supabase URL is not configured",
+        )
+
+    return jwt.decode(
+        token,
+        key,
+        algorithms=algorithms,
+        audience=settings.supabase_jwt_audience,
+        issuer=issuer,
+        options={
+            "require": ["exp", "iss", "sub", "aud"],
+        },
+    )
+
+
 def _verify_token(token: str) -> dict:
-    """Verify Supabase JWT token via JWKS (asymmetric) or shared secret (symmetric)."""
+    """Verify a Supabase user access token and its core identity claims."""
     try:
         header = jwt.get_unverified_header(token)
     except Exception as exc:
@@ -60,23 +94,21 @@ def _verify_token(token: str) -> dict:
 
     alg = header.get("alg", "HS256")
 
-    # 1. Asymmetric verification (ES256, RS256 - default modern Supabase configuration)
+    # Modern Supabase signing-key projects expose asymmetric keys through JWKS.
     if alg in ("RS256", "ES256"):
         jwk_client = get_jwk_client()
         if jwk_client is None:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Supabase URL not configured for asymmetric JWT verification",
+                detail="Supabase URL not configured for JWT verification",
             )
         try:
             signing_key = jwk_client.get_signing_key_from_jwt(token)
-            payload = jwt.decode(
-                token,
-                signing_key.key,
+            return _decode_verified_token(
+                token=token,
+                key=signing_key.key,
                 algorithms=[alg],
-                audience=settings.supabase_jwt_audience,
             )
-            return payload
         except jwt.PyJWTError as exc:
             logger.warning("Supabase asymmetric JWT verification failed: %s", exc)
             raise HTTPException(
@@ -85,7 +117,7 @@ def _verify_token(token: str) -> dict:
                 headers={"WWW-Authenticate": "Bearer"},
             ) from exc
 
-    # 2. Symmetric verification (HS256 - legacy Supabase secret)
+    # Legacy HS256 fallback. Prefer asymmetric Supabase signing keys for new projects.
     if alg == "HS256":
         secret = (
             settings.supabase_jwt_secret.get_secret_value()
@@ -99,13 +131,11 @@ def _verify_token(token: str) -> dict:
                 headers={"WWW-Authenticate": "Bearer"},
             )
         try:
-            payload = jwt.decode(
-                token,
-                secret,
+            return _decode_verified_token(
+                token=token,
+                key=secret,
                 algorithms=["HS256"],
-                audience=settings.supabase_jwt_audience,
             )
-            return payload
         except jwt.PyJWTError as exc:
             logger.warning("Supabase HS256 JWT verification failed: %s", exc)
             raise HTTPException(
@@ -116,7 +146,7 @@ def _verify_token(token: str) -> dict:
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail=f"Unsupported token algorithm: {alg}",
+        detail="Unsupported authentication token algorithm",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
@@ -127,10 +157,9 @@ def get_current_user(
 ) -> AuthenticatedUser:
     """Extract and strictly verify the authenticated user from Supabase JWT.
 
-    Never trusts request-provided user_id in payload.
-    Any dev auth bypass is restricted to test/dev environment with explicit opt-in.
+    Identity always comes from the verified token subject. A development bypass is
+    available only when it is explicitly enabled and the app environment is dev/test.
     """
-    # Guarded Test / Dev Auth Bypass (strictly disabled by default)
     if (
         settings.enable_dev_auth_bypass
         and settings.app_env in ("test", "development")
@@ -163,21 +192,14 @@ def get_current_user(
         )
 
     payload = _verify_token(token)
-
     sub = payload.get("sub")
-    if not sub:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token missing subject (sub) claim",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
 
     try:
         user_id = UUID(sub)
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid user ID format in token subject",
+            detail="Invalid user identity in authentication token",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
@@ -192,7 +214,7 @@ def get_optional_user(
     authorization: Annotated[str | None, Header()] = None,
     x_dev_user_id: Annotated[str | None, Header()] = None,
 ) -> AuthenticatedUser | None:
-    """Return authenticated user if Authorization header is provided, else None."""
+    """Return an authenticated user when auth material is present, else None."""
     if authorization or (
         settings.enable_dev_auth_bypass
         and settings.app_env in ("test", "development")
