@@ -1,4 +1,5 @@
 from decimal import Decimal
+from unittest.mock import patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -42,7 +43,7 @@ def test_progress_not_started():
     assert data["has_report"] is False
 
 
-def test_progress_running_with_stages():
+def test_progress_prefers_running_stage_over_later_pending_stage():
     with Session(engine) as db:
         idea = Idea(
             title="FinTech App",
@@ -72,19 +73,27 @@ def test_progress_running_with_stages():
         db.add(run)
         db.flush()
 
-        stage1 = AnalysisStageRun(
+        completed_stage = AnalysisStageRun(
             analysis_run_id=run.id,
             stage=AnalysisStage.MARKET_RESEARCH.value,
             attempt=1,
             status=AnalysisStageStatus.COMPLETED.value,
         )
-        stage2 = AnalysisStageRun(
+        running_stage = AnalysisStageRun(
             analysis_run_id=run.id,
             stage=AnalysisStage.BUSINESS_STRATEGY.value,
             attempt=1,
             status=AnalysisStageStatus.RUNNING.value,
         )
-        db.add_all([stage1, stage2])
+        later_pending_stage = AnalysisStageRun(
+            analysis_run_id=run.id,
+            stage=AnalysisStage.FINANCE.value,
+            attempt=1,
+            status=AnalysisStageStatus.PENDING.value,
+        )
+        db.add_all(
+            [completed_stage, running_stage, later_pending_stage]
+        )
         db.commit()
 
         idea_id = idea.id
@@ -98,7 +107,7 @@ def test_progress_running_with_stages():
     assert data["run_status"] == "RUNNING"
     assert data["current_stage"] == AnalysisStage.BUSINESS_STRATEGY.value
     assert AnalysisStage.MARKET_RESEARCH.value in data["completed_stages"]
-    assert len(data["stage_runs"]) == 2
+    assert len(data["stage_runs"]) == 3
 
 
 def test_progress_paused_and_answer_flow():
@@ -140,14 +149,13 @@ def test_progress_paused_and_answer_flow():
         db.add(finance_stage)
         db.flush()
 
-        from app.schemas.finance import FinancialPeriod
         from app.schemas.finance_runtime import (
             FinanceInputOption,
             FinanceInputOptionBasis,
             FinanceInputRequest,
         )
 
-        fin_req = FinanceInputRequest(
+        finance_request = FinanceInputRequest(
             input_name=FinancialInputName.SELLING_PRICE_PER_UNIT,
             question="What is the expected price per user per month?",
             options=[
@@ -189,7 +197,7 @@ def test_progress_paused_and_answer_flow():
             stage_run_id=finance_stage.id,
             input_name=FinancialInputName.SELLING_PRICE_PER_UNIT.value,
             status=AnalysisRunInputStatus.PENDING.value,
-            request_data=fin_req.model_dump(mode="json"),
+            request_data=finance_request.model_dump(mode="json"),
         )
         db.add(run_input)
         db.commit()
@@ -197,42 +205,76 @@ def test_progress_paused_and_answer_flow():
         idea_id = idea.id
         input_id = run_input.id
 
-    # 1. Progress endpoint includes pending input summary
-    prog_res = client.get(f"/api/v1/ideas/{idea_id}/analysis/progress")
-    assert prog_res.status_code == 200
-    prog_data = prog_res.json()
-    assert prog_data["run_status"] == "PAUSED_FOR_USER"
-    assert prog_data["pending_input"] is not None
-    assert prog_data["pending_input"]["input_name"] == FinancialInputName.SELLING_PRICE_PER_UNIT.value
-    assert len(prog_data["pending_input"]["options"]) == 2
+    progress_response = client.get(
+        f"/api/v1/ideas/{idea_id}/analysis/progress"
+    )
+    assert progress_response.status_code == 200
+    progress_data = progress_response.json()
+    assert progress_data["run_status"] == "PAUSED_FOR_USER"
+    assert progress_data["current_stage"] == AnalysisStage.FINANCE.value
+    assert progress_data["pending_input"] is not None
+    assert (
+        progress_data["pending_input"]["input_name"]
+        == FinancialInputName.SELLING_PRICE_PER_UNIT.value
+    )
+    assert len(progress_data["pending_input"]["options"]) == 2
 
-    # 2. Get pending input endpoint directly
-    pending_res = client.get(f"/api/v1/ideas/{idea_id}/analysis/inputs/pending")
-    assert pending_res.status_code == 200
-    pending_data = pending_res.json()
+    pending_response = client.get(
+        f"/api/v1/ideas/{idea_id}/analysis/inputs/pending"
+    )
+    assert pending_response.status_code == 200
+    pending_data = pending_response.json()
     assert pending_data["input_id"] == str(input_id)
-    assert pending_data["question"] == "What is the expected price per user per month?"
+    assert (
+        pending_data["question"]
+        == "What is the expected price per user per month?"
+    )
     assert pending_data["currency"] == "USD"
 
-    # 3. Answer with selected option (mocking background task)
-    from unittest.mock import patch
+    # Ambiguous input must not silently prefer one field over the other.
+    ambiguous_response = client.post(
+        f"/api/v1/ideas/{idea_id}/analysis/inputs/{input_id}/answer",
+        json={
+            "choice": "tier_standard",
+            "value": "49",
+        },
+    )
+    assert ambiguous_response.status_code == 422
+
+    # Parsing a period must be safe, and an invalid period for a selling-price
+    # input must be reported as client validation rather than crashing with 500.
+    invalid_period_response = client.post(
+        f"/api/v1/ideas/{idea_id}/analysis/inputs/{input_id}/answer",
+        json={
+            "value": "49",
+            "currency": "USD",
+            "unit_label": "seat",
+            "period": "MONTHLY",
+        },
+    )
+    assert invalid_period_response.status_code == 422
+
+    # The server resolves predefined options from the persisted request; an
+    # arbitrary client option ID must not be accepted.
+    invalid_option_response = client.post(
+        f"/api/v1/ideas/{idea_id}/analysis/inputs/{input_id}/answer",
+        json={"choice": "not-a-real-option"},
+    )
+    assert invalid_option_response.status_code == 422
+
     with patch("app.api.v1.analysis.run_pipeline_sync") as mock_runner:
-        answer_res = client.post(
+        answer_response = client.post(
             f"/api/v1/ideas/{idea_id}/analysis/inputs/{input_id}/answer",
-            json={
-                "choice": "tier_standard",
-            },
+            json={"choice": "tier_standard"},
         )
-        assert answer_res.status_code == 200
-        answer_data = answer_res.json()
+        assert answer_response.status_code == 200
+        answer_data = answer_response.json()
         assert answer_data["status"] == "ANSWERED"
         assert answer_data["analysis_run_status"] == "RUNNING"
         mock_runner.assert_called_once()
 
-    # Verify in DB that run_input is answered and run is RUNNING
     with Session(engine) as db:
         updated_input = db.get(AnalysisRunInput, input_id)
         assert updated_input.status == AnalysisRunInputStatus.ANSWERED.value
         updated_run = db.get(AnalysisRun, updated_input.analysis_run_id)
         assert updated_run.status == AnalysisRunStatus.RUNNING.value
-
