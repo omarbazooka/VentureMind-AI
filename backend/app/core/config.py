@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     groq_api_key: SecretStr | None = None
     firecrawl_api_key: SecretStr | None = None
 
+    # Browser/API integration. Keep origins explicit; never use a credentialed wildcard.
+    cors_origins: str = "http://localhost:3000"
+
     # Supabase Auth Configuration
     supabase_url: str | None = None
     supabase_jwt_secret: SecretStr | None = None
