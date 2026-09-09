@@ -3,21 +3,21 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
+from pydantic import ValidationError
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.models.analysis_result import AnalysisResult
 from app.models.analysis_run import AnalysisRun
+from app.models.analysis_stage_run import AnalysisStageRun
 from app.models.idea import Idea
 from app.models.report import Report
-from app.schemas.analysis import AnalysisStage
+from app.schemas.analysis import AnalysisStage, AnalysisStageStatus
 from app.schemas.analytics import DecisionAnalyticsResult
-from app.schemas.decision import FinalDecisionAnalysis
+from app.schemas.decision import DECISION_UPSTREAM_STAGES, FinalDecisionAnalysis
 from app.schemas.finance import (
     FinancialMetricName,
-    FinancialPeriod,
     FinancialScenarioBundle,
-    FinancialScenarioKind,
 )
 from app.schemas.report import (
     ReportAnalyticsSection,
@@ -27,19 +27,13 @@ from app.schemas.report import (
     ReportFinanceSection,
     ReportMarketMetrics,
     ReportMarketSection,
-    ReportMetricStatus,
-    ReportMetricValue,
     ReportRiskSection,
     ReportSourceItem,
     ReportStrategySection,
     ReportValidationSection,
     StructuredReport,
 )
-from app.schemas.research import (
-    CompetitorAnalysis,
-    CustomerAnalysis,
-    MarketAnalysis,
-)
+from app.schemas.research import CompetitorAnalysis, CustomerAnalysis, MarketAnalysis
 from app.schemas.risk import RiskAnalysis
 from app.schemas.strategy import BusinessStrategyAnalysis
 from app.schemas.validation import ValidationAnalysis
@@ -49,158 +43,223 @@ class ReportGenerationError(RuntimeError):
     pass
 
 
-def _extract_metric_value(
-    metrics: list[Any], metric_name: FinancialMetricName
-) -> Decimal | None:
-    for m in metrics:
-        name = m.metric_name if hasattr(m, "metric_name") else m.get("metric_name")
-        val = m.value if hasattr(m, "value") else m.get("value")
+def _extract_metric(metrics: list[Any], metric_name: FinancialMetricName) -> Any | None:
+    for metric in metrics:
+        name = metric.metric_name if hasattr(metric, "metric_name") else metric.get("metric_name")
         if name == metric_name or name == metric_name.value:
-            if val is not None:
-                return Decimal(str(val))
+            return metric
     return None
 
 
+def _metric_value(metric: Any | None) -> Decimal | None:
+    if metric is None:
+        return None
+    value = metric.value if hasattr(metric, "value") else metric.get("value")
+    return Decimal(str(value)) if value is not None else None
+
+
+def _load_completed_result(
+    *,
+    db: Session,
+    analysis_run_id: UUID,
+    stage: AnalysisStage,
+    stage_run_id: UUID,
+) -> AnalysisResult:
+    stage_run = db.get(AnalysisStageRun, stage_run_id)
+    if stage_run is None:
+        raise ReportGenerationError(
+            f"Report lineage references a missing {stage.value} stage run"
+        )
+    if stage_run.analysis_run_id != analysis_run_id:
+        raise ReportGenerationError(
+            f"Report lineage for {stage.value} belongs to another AnalysisRun"
+        )
+    if stage_run.stage != stage.value:
+        raise ReportGenerationError(
+            f"Report lineage stage mismatch for {stage.value}"
+        )
+    if stage_run.status != AnalysisStageStatus.COMPLETED.value:
+        raise ReportGenerationError(
+            f"Report requires completed {stage.value} stage lineage"
+        )
+
+    result = db.scalar(
+        select(AnalysisResult).where(
+            AnalysisResult.analysis_run_id == analysis_run_id,
+            AnalysisResult.stage_run_id == stage_run_id,
+            AnalysisResult.stage == stage.value,
+        )
+    )
+    if result is None:
+        raise ReportGenerationError(
+            f"Completed {stage.value} lineage has no persisted result"
+        )
+    return result
+
+
+def _load_latest_completed_decision(
+    *, db: Session, analysis_run_id: UUID
+) -> tuple[AnalysisResult, FinalDecisionAnalysis]:
+    result = db.scalar(
+        select(AnalysisResult)
+        .join(
+            AnalysisStageRun,
+            AnalysisStageRun.id == AnalysisResult.stage_run_id,
+        )
+        .where(
+            AnalysisResult.analysis_run_id == analysis_run_id,
+            AnalysisResult.stage == AnalysisStage.INVESTMENT_COMMITTEE.value,
+            AnalysisStageRun.analysis_run_id == analysis_run_id,
+            AnalysisStageRun.stage == AnalysisStage.INVESTMENT_COMMITTEE.value,
+            AnalysisStageRun.status == AnalysisStageStatus.COMPLETED.value,
+        )
+        .order_by(
+            AnalysisStageRun.attempt.desc(),
+            AnalysisResult.created_at.desc(),
+        )
+        .limit(1)
+    )
+    if result is None:
+        raise ReportGenerationError(
+            "Cannot generate report before Investment Committee is completed"
+        )
+
+    try:
+        decision = FinalDecisionAnalysis.model_validate(result.result_data)
+    except ValidationError as exc:
+        raise ReportGenerationError(
+            "Persisted Final Decision is invalid"
+        ) from exc
+
+    if set(decision.upstream_stage_run_ids) != DECISION_UPSTREAM_STAGES:
+        raise ReportGenerationError(
+            "Final Decision does not contain complete upstream stage-run lineage"
+        )
+    return result, decision
+
+
+def _build_finance_summary(finance: FinancialScenarioBundle) -> str:
+    revenue_metric = _extract_metric(
+        finance.base.metrics, FinancialMetricName.REVENUE
+    )
+    operating_metric = _extract_metric(
+        finance.base.metrics, FinancialMetricName.OPERATING_RESULT
+    )
+    revenue = _metric_value(revenue_metric)
+    operating = _metric_value(operating_metric)
+
+    parts = [
+        "Financial analysis evaluated the authoritative Base, Upside, and Downside scenarios."
+    ]
+    if revenue is not None:
+        currency = getattr(revenue_metric, "currency", None)
+        period = getattr(revenue_metric, "period", None)
+        suffix = ""
+        if currency:
+            suffix += f" {currency}"
+        if period:
+            suffix += f" / {period.value.lower()}"
+        parts.append(f"Base revenue: {revenue}{suffix}.")
+    if operating is not None:
+        currency = getattr(operating_metric, "currency", None)
+        period = getattr(operating_metric, "period", None)
+        suffix = ""
+        if currency:
+            suffix += f" {currency}"
+        if period:
+            suffix += f" / {period.value.lower()}"
+        parts.append(f"Base operating result: {operating}{suffix}.")
+    return " ".join(parts)
+
+
 def _build_chart_data(
+    *,
     finance_bundle: FinancialScenarioBundle,
     analytics_result: DecisionAnalyticsResult,
     risk_analysis: RiskAnalysis,
 ) -> ReportChartData:
     break_even_comparison: list[dict[str, Any]] = []
-    monthly_projections: list[dict[str, Any]] = []
     sensitivity_ranking: list[dict[str, Any]] = []
     risk_matrix: list[dict[str, Any]] = []
 
-    # Break-even comparison
-    for sc_name, sc_data in (
+    for scenario_name, scenario in (
         ("BASE", finance_bundle.base),
         ("UPSIDE", finance_bundle.upside),
         ("DOWNSIDE", finance_bundle.downside),
     ):
-        sc_dict = sc_data.model_dump(mode="json")
-        metrics = sc_dict.get("metrics", [])
-        be_units = _extract_metric_value(
-            metrics, FinancialMetricName.BREAK_EVEN_UNITS
+        break_even_metric = _extract_metric(
+            scenario.metrics, FinancialMetricName.BREAK_EVEN_UNITS
         )
-        currency = None
-        for m in metrics:
-            if m.get("currency"):
-                currency = m["currency"]
-                break
+        break_even_units = _metric_value(break_even_metric)
+        price = scenario.assumptions.selling_price_per_unit.value
 
-        price_val = sc_dict.get("assumptions", {}).get(
-            "selling_price_per_unit", {}
-        ).get("value")
-        be_rev = (
-            float(be_units) * float(price_val)
-            if (be_units is not None and price_val is not None)
-            else None
-        )
+        derived_revenue = None
+        if break_even_units is not None and price is not None:
+            derived_revenue = break_even_units * price
 
         break_even_comparison.append(
             {
-                "scenario": sc_name,
-                "break_even_units": float(be_units) if be_units is not None else None,
-                "break_even_revenue": be_rev,
-                "currency": currency,
+                "scenario": scenario_name,
+                "break_even_units": (
+                    str(break_even_units)
+                    if break_even_units is not None
+                    else None
+                ),
+                "break_even_revenue": (
+                    str(derived_revenue)
+                    if derived_revenue is not None
+                    else None
+                ),
+                "currency": scenario.assumptions.selling_price_per_unit.currency,
+                "period": (
+                    break_even_metric.period.value
+                    if break_even_metric is not None
+                    and getattr(break_even_metric, "period", None) is not None
+                    else None
+                ),
+                "provenance": "CALCULATED_FROM_FINANCE",
             }
         )
 
-    # Monthly projections for base scenario (12 months)
-    base_dict = finance_bundle.base.model_dump(mode="json")
-    base_metrics = base_dict.get("metrics", [])
-    base_assumptions = base_dict.get("assumptions", {})
+    # VentureMind currently has no authoritative month-by-month forecast model.
+    # Do not invent a ramp curve in the report layer. This stays empty until a
+    # persisted Finance/time-series result explicitly provides monthly values.
+    monthly_projections: list[dict[str, Any]] = []
 
-    rev_metric = _extract_metric_value(
-        base_metrics, FinancialMetricName.REVENUE
-    )
-    var_cost_metric = _extract_metric_value(
-        base_metrics, FinancialMetricName.VARIABLE_COSTS
-    )
-    fixed_cost_val = base_assumptions.get("fixed_costs", {}).get("value")
-    cost_metric = (
-        (var_cost_metric or Decimal("0"))
-        + (Decimal(str(fixed_cost_val)) if fixed_cost_val is not None else Decimal("0"))
-    )
-    op_profit_metric = _extract_metric_value(
-        base_metrics, FinancialMetricName.OPERATING_RESULT
-    )
-
-    monthly_rev = float(rev_metric) if rev_metric is not None else 0.0
-    monthly_cost = float(cost_metric) if cost_metric is not None else 0.0
-    monthly_profit = float(op_profit_metric) if op_profit_metric is not None else 0.0
-
-    # If assumption volume/fixed cost was annual, normalize to monthly
-    vol_period = base_assumptions.get("sales_volume", {}).get("period")
-    if vol_period == FinancialPeriod.ANNUAL.value:
-        monthly_rev = round(monthly_rev / 12, 2)
-        monthly_cost = round(monthly_cost / 12, 2)
-        monthly_profit = round(monthly_profit / 12, 2)
-
-    cumulative_cash = 0.0
-    starting_cash_obj = base_assumptions.get("starting_cash")
-    starting_cash_val = (
-        starting_cash_obj.get("value")
-        if isinstance(starting_cash_obj, dict)
-        else None
-    )
-    if starting_cash_val is not None:
-        cumulative_cash = float(starting_cash_val)
-
-    for m in range(1, 13):
-        # Apply modest initial ramp for months 1-3
-        ramp = min(1.0, 0.4 + (m * 0.2)) if m <= 3 else 1.0
-        m_rev = round(monthly_rev * ramp, 2)
-        m_cost = round(monthly_cost * (0.8 if m <= 2 else 1.0), 2)
-        m_profit = round(m_rev - m_cost, 2)
-        cumulative_cash = round(cumulative_cash + m_profit, 2)
-
-        monthly_projections.append(
-            {
-                "month": m,
-                "revenue": m_rev,
-                "costs": m_cost,
-                "profit": m_profit,
-                "cumulative_cash": cumulative_cash,
-            }
-        )
-
-    # Sensitivity ranking
     if analytics_result.sensitivity is not None:
-        for inp in analytics_result.sensitivity.inputs:
-            item_name = inp.input_name.value
-            shock_pct = float(analytics_result.sensitivity.shock_percent)
-            impacts_list = []
-            for imp in inp.increase.impacts:
-                impacts_list.append(
-                    {
-                        "metric_name": imp.metric_name.value,
-                        "change_percent": (
-                            float(imp.output_relative_change_percent)
-                            if imp.output_relative_change_percent is not None
-                            else None
-                        ),
-                    }
-                )
+        for item in sorted(
+            analytics_result.sensitivity.inputs,
+            key=lambda value: value.rank or 10_000,
+        ):
             sensitivity_ranking.append(
                 {
-                    "input_name": item_name,
-                    "shock_percent": shock_pct,
-                    "impacts": impacts_list,
+                    "input_name": item.input_name.value,
+                    "rank": item.rank,
+                    "shock_percent": str(
+                        analytics_result.sensitivity.shock_percent
+                    ),
+                    "max_abs_ranking_metric_change_percent": (
+                        str(item.max_abs_ranking_metric_change_percent)
+                        if item.max_abs_ranking_metric_change_percent is not None
+                        else None
+                    ),
+                    "decrease": item.decrease.model_dump(mode="json"),
+                    "increase": item.increase.model_dump(mode="json"),
+                    "provenance": "CALCULATED",
                 }
             )
 
-    # Risk matrix
-    for r in risk_analysis.risks:
+    for risk in risk_analysis.risks:
         risk_matrix.append(
             {
-                "category": r.category.value,
-                "title": r.title,
-                "likelihood": r.likelihood.value,
-                "impact": r.impact.value,
-                "score": r.risk_score,
-                "level": r.risk_level.value,
-                "mitigation_actions": r.mitigation_actions,
+                "category": risk.category.value,
+                "title": risk.title,
+                "likelihood": risk.likelihood.value,
+                "impact": risk.impact.value,
+                "score": risk.risk_score,
+                "level": risk.risk_level.value,
+                "mitigation_actions": risk.mitigation_actions,
+                "monitoring_signals": risk.monitoring_signals,
             }
         )
 
@@ -213,244 +272,192 @@ def _build_chart_data(
 
 
 def generate_structured_report(
-    *,
-    db: Session,
-    analysis_run_id: UUID,
+    *, db: Session, analysis_run_id: UUID
 ) -> tuple[Report, StructuredReport]:
-    run = db.get(AnalysisRun, analysis_run_id)
+    # Serialize report generation for one AnalysisRun and make retries idempotent.
+    run = db.scalar(
+        select(AnalysisRun)
+        .where(AnalysisRun.id == analysis_run_id)
+        .with_for_update()
+    )
     if run is None:
         raise ReportGenerationError(
             f"AnalysisRun with ID {analysis_run_id} not found"
         )
 
+    existing = db.scalar(
+        select(Report)
+        .where(Report.analysis_run_id == analysis_run_id)
+        .order_by(desc(Report.version))
+        .limit(1)
+    )
+    if existing is not None:
+        try:
+            return existing, StructuredReport.model_validate(existing.report_data)
+        except ValidationError as exc:
+            raise ReportGenerationError(
+                "Existing persisted report is invalid"
+            ) from exc
+
     idea = db.get(Idea, run.idea_id)
     if idea is None:
         raise ReportGenerationError(f"Idea with ID {run.idea_id} not found")
 
-    # Load all results
-    results = db.scalars(
-        select(AnalysisResult).where(
-            AnalysisResult.analysis_run_id == analysis_run_id
-        )
-    ).all()
-    results_by_stage: dict[str, AnalysisResult] = {
-        res.stage: res for res in results
-    }
+    _, decision = _load_latest_completed_decision(
+        db=db, analysis_run_id=analysis_run_id
+    )
 
-    # Ensure required stages are available
-    required_stages = [
-        AnalysisStage.MARKET_RESEARCH.value,
-        AnalysisStage.COMPETITOR_INTELLIGENCE.value,
-        AnalysisStage.CUSTOMER_INTELLIGENCE.value,
-        AnalysisStage.BUSINESS_STRATEGY.value,
-        AnalysisStage.FINANCE.value,
-        AnalysisStage.DECISION_ANALYTICS.value,
-        AnalysisStage.RISK.value,
-        AnalysisStage.INDEPENDENT_VALIDATION.value,
-        AnalysisStage.INVESTMENT_COMMITTEE.value,
-    ]
-    missing = [s for s in required_stages if s not in results_by_stage]
-    if missing:
+    exact_results: dict[AnalysisStage, AnalysisResult] = {}
+    for stage in DECISION_UPSTREAM_STAGES:
+        exact_results[stage] = _load_completed_result(
+            db=db,
+            analysis_run_id=analysis_run_id,
+            stage=stage,
+            stage_run_id=decision.upstream_stage_run_ids[stage],
+        )
+
+    try:
+        market = MarketAnalysis.model_validate(
+            exact_results[AnalysisStage.MARKET_RESEARCH].result_data
+        )
+        competitors = CompetitorAnalysis.model_validate(
+            exact_results[AnalysisStage.COMPETITOR_INTELLIGENCE].result_data
+        )
+        customer = CustomerAnalysis.model_validate(
+            exact_results[AnalysisStage.CUSTOMER_INTELLIGENCE].result_data
+        )
+        strategy = BusinessStrategyAnalysis.model_validate(
+            exact_results[AnalysisStage.BUSINESS_STRATEGY].result_data
+        )
+        finance = FinancialScenarioBundle.model_validate(
+            exact_results[AnalysisStage.FINANCE].result_data
+        )
+        analytics = DecisionAnalyticsResult.model_validate(
+            exact_results[AnalysisStage.DECISION_ANALYTICS].result_data
+        )
+        risk = RiskAnalysis.model_validate(
+            exact_results[AnalysisStage.RISK].result_data
+        )
+        validation = ValidationAnalysis.model_validate(
+            exact_results[AnalysisStage.INDEPENDENT_VALIDATION].result_data
+        )
+    except ValidationError as exc:
         raise ReportGenerationError(
-            f"Cannot generate report: missing stage results for {missing}"
+            "An authoritative upstream result is invalid"
+        ) from exc
+
+    # Defense in depth: the exact Finance/Analytics and Validation lineage must
+    # still agree with the Final Decision packet selected above.
+    if analytics.finance_stage_run_id != decision.upstream_stage_run_ids[AnalysisStage.FINANCE]:
+        raise ReportGenerationError(
+            "Decision Analytics is not grounded in the Finance result selected by Final Decision"
+        )
+    expected_validation_lineage = {
+        stage: stage_run_id
+        for stage, stage_run_id in decision.upstream_stage_run_ids.items()
+        if stage != AnalysisStage.INDEPENDENT_VALIDATION
+    }
+    if validation.upstream_stage_run_ids != expected_validation_lineage:
+        raise ReportGenerationError(
+            "Independent Validation lineage does not match Final Decision lineage"
         )
 
-    # Parse stage analyses
-    mkt_raw = results_by_stage[AnalysisStage.MARKET_RESEARCH.value].result_data
-    comp_raw = results_by_stage[
-        AnalysisStage.COMPETITOR_INTELLIGENCE.value
-    ].result_data
-    cust_raw = results_by_stage[
-        AnalysisStage.CUSTOMER_INTELLIGENCE.value
-    ].result_data
-    strat_raw = results_by_stage[
-        AnalysisStage.BUSINESS_STRATEGY.value
-    ].result_data
-    fin_raw = results_by_stage[AnalysisStage.FINANCE.value].result_data
-    da_raw = results_by_stage[
-        AnalysisStage.DECISION_ANALYTICS.value
-    ].result_data
-    risk_raw = results_by_stage[AnalysisStage.RISK.value].result_data
-    val_raw = results_by_stage[
-        AnalysisStage.INDEPENDENT_VALIDATION.value
-    ].result_data
-    dec_raw = results_by_stage[
-        AnalysisStage.INVESTMENT_COMMITTEE.value
-    ].result_data
-
-    mkt_model = MarketAnalysis.model_validate(mkt_raw)
-    comp_model = CompetitorAnalysis.model_validate(comp_raw)
-    cust_model = CustomerAnalysis.model_validate(cust_raw)
-    strat_model = BusinessStrategyAnalysis.model_validate(strat_raw)
-    fin_model = FinancialScenarioBundle.model_validate(fin_raw)
-    da_model = DecisionAnalyticsResult.model_validate(da_raw)
-    risk_model = RiskAnalysis.model_validate(risk_raw)
-    val_model = ValidationAnalysis.model_validate(val_raw)
-    dec_model = FinalDecisionAnalysis.model_validate(dec_raw)
-
-    # Collect all sources
     sources: list[ReportSourceItem] = []
     seen_source_ids: set[str] = set()
-
-    for s in mkt_model.evidence_sources:
-        if s.source_id not in seen_source_ids:
-            seen_source_ids.add(s.source_id)
+    for stage, analysis in (
+        (AnalysisStage.MARKET_RESEARCH, market),
+        (AnalysisStage.COMPETITOR_INTELLIGENCE, competitors),
+        (AnalysisStage.CUSTOMER_INTELLIGENCE, customer),
+    ):
+        for source in analysis.evidence_sources:
+            if source.source_id in seen_source_ids:
+                continue
+            seen_source_ids.add(source.source_id)
             sources.append(
                 ReportSourceItem(
-                    source_id=s.source_id,
-                    title=s.title,
-                    url=str(s.url) if s.url else None,
-                    provenance=s.provenance.value,
-                    stage=AnalysisStage.MARKET_RESEARCH.value,
+                    source_id=source.source_id,
+                    title=source.title,
+                    url=str(source.url) if source.url else None,
+                    provenance=source.provenance.value,
+                    stage=stage.value,
                 )
             )
 
-    for s in comp_model.evidence_sources:
-        if s.source_id not in seen_source_ids:
-            seen_source_ids.add(s.source_id)
-            sources.append(
-                ReportSourceItem(
-                    source_id=s.source_id,
-                    title=s.title,
-                    url=str(s.url) if s.url else None,
-                    provenance=s.provenance.value,
-                    stage=AnalysisStage.COMPETITOR_INTELLIGENCE.value,
-                )
-            )
-
-    for s in cust_model.evidence_sources:
-        if s.source_id not in seen_source_ids:
-            seen_source_ids.add(s.source_id)
-            sources.append(
-                ReportSourceItem(
-                    source_id=s.source_id,
-                    title=s.title,
-                    url=str(s.url) if s.url else None,
-                    provenance=s.provenance.value,
-                    stage=AnalysisStage.CUSTOMER_INTELLIGENCE.value,
-                )
-            )
-
-    # Build sections
     market_section = ReportMarketSection(
-        summary=mkt_model.summary,
-        evidence_quality=mkt_model.evidence_quality.value,
-        findings=[f.model_dump(mode="json") for f in mkt_model.findings],
-        market_metrics=ReportMarketMetrics(),  # Allow unavailable states per Correction 3
-        limitations=mkt_model.limitations,
+        summary=market.summary,
+        evidence_quality=market.evidence_quality.value,
+        findings=[item.model_dump(mode="json") for item in market.findings],
+        market_metrics=ReportMarketMetrics(),
+        limitations=market.limitations,
     )
-
     competitor_section = ReportCompetitorSection(
-        summary=comp_model.summary,
-        evidence_quality=comp_model.evidence_quality.value,
-        competitors=[
-            c.model_dump(mode="json") for c in comp_model.competitors
-        ],
-        findings=[f.model_dump(mode="json") for f in comp_model.findings],
-        limitations=comp_model.limitations,
+        summary=competitors.summary,
+        evidence_quality=competitors.evidence_quality.value,
+        competitors=[item.model_dump(mode="json") for item in competitors.competitors],
+        findings=[item.model_dump(mode="json") for item in competitors.findings],
+        limitations=competitors.limitations,
     )
-
     customer_section = ReportCustomerSection(
-        summary=cust_model.summary,
-        evidence_quality=cust_model.evidence_quality.value,
-        findings=[f.model_dump(mode="json") for f in cust_model.findings],
-        limitations=cust_model.limitations,
+        summary=customer.summary,
+        evidence_quality=customer.evidence_quality.value,
+        findings=[item.model_dump(mode="json") for item in customer.findings],
+        limitations=customer.limitations,
     )
-
     strategy_section = ReportStrategySection(
-        executive_summary=strat_model.executive_summary,
-        positioning=[
-            p.model_dump(mode="json") for p in strat_model.positioning
-        ],
-        value_proposition=[
-            v.model_dump(mode="json") for v in strat_model.value_proposition
-        ],
-        business_model_implications=[
-            b.model_dump(mode="json")
-            for b in strat_model.business_model_implications
-        ],
-        go_to_market=[
-            g.model_dump(mode="json") for g in strat_model.go_to_market
-        ],
-        strategic_strengths=[
-            s.model_dump(mode="json")
-            for s in strat_model.strategic_strengths
-        ],
-        strategic_weaknesses=[
-            w.model_dump(mode="json")
-            for w in strat_model.strategic_weaknesses
-        ],
-        critical_assumptions=[
-            c.model_dump(mode="json")
-            for c in strat_model.critical_assumptions
-        ],
-        limitations=strat_model.limitations,
+        executive_summary=strategy.executive_summary,
+        positioning=[item.model_dump(mode="json") for item in strategy.positioning],
+        value_proposition=[item.model_dump(mode="json") for item in strategy.value_proposition],
+        business_model_implications=[item.model_dump(mode="json") for item in strategy.business_model_implications],
+        go_to_market=[item.model_dump(mode="json") for item in strategy.go_to_market],
+        strategic_strengths=[item.model_dump(mode="json") for item in strategy.strategic_strengths],
+        strategic_weaknesses=[item.model_dump(mode="json") for item in strategy.strategic_weaknesses],
+        critical_assumptions=[item.model_dump(mode="json") for item in strategy.critical_assumptions],
+        limitations=strategy.limitations,
     )
-
     finance_section = ReportFinanceSection(
-        executive_summary=(
-            f"Financial analysis evaluated Base, Upside, and Downside scenarios. "
-            f"Base monthly revenue is estimated at "
-            f"{_extract_metric_value(fin_model.base.metrics, FinancialMetricName.REVENUE) or 'N/A'}, "
-            f"with operating profit of "
-            f"{_extract_metric_value(fin_model.base.metrics, FinancialMetricName.OPERATING_RESULT) or 'N/A'}."
-        ),
-        base_scenario=fin_model.base.model_dump(mode="json"),
-        upside_scenario=fin_model.upside.model_dump(mode="json"),
-        downside_scenario=fin_model.downside.model_dump(mode="json"),
-        comparisons=[
-            c.model_dump(mode="json") for c in fin_model.comparisons
-        ],
-        limitations=fin_model.limitations,
+        executive_summary=_build_finance_summary(finance),
+        base_scenario=finance.base.model_dump(mode="json"),
+        upside_scenario=finance.upside.model_dump(mode="json"),
+        downside_scenario=finance.downside.model_dump(mode="json"),
+        comparisons=[item.model_dump(mode="json") for item in finance.comparisons],
+        limitations=finance.limitations,
     )
-
     analytics_section = ReportAnalyticsSection(
-        kpis=[k.model_dump(mode="json") for k in da_model.kpis],
-        scenario_relative_changes=[
-            s.model_dump(mode="json")
-            for s in da_model.scenario_relative_changes
-        ],
+        kpis=[item.model_dump(mode="json") for item in analytics.kpis],
+        scenario_relative_changes=[item.model_dump(mode="json") for item in analytics.scenario_relative_changes],
         sensitivity=(
-            da_model.sensitivity.model_dump(mode="json")
-            if da_model.sensitivity
+            analytics.sensitivity.model_dump(mode="json")
+            if analytics.sensitivity is not None
             else None
         ),
-        limitations=da_model.limitations,
+        limitations=analytics.limitations,
     )
-
     risk_section = ReportRiskSection(
-        executive_summary=risk_model.executive_summary,
-        overall_level=(
-            risk_model.overall_level.value
-            if risk_model.overall_level
-            else None
-        ),
-        risks=[r.model_dump(mode="json") for r in risk_model.risks],
-        limitations=risk_model.limitations,
+        executive_summary=risk.executive_summary,
+        overall_level=(risk.overall_level.value if risk.overall_level else None),
+        risks=[item.model_dump(mode="json") for item in risk.risks],
+        limitations=risk.limitations,
     )
-
     validation_section = ReportValidationSection(
-        status=val_model.status.value,
-        executive_assessment=val_model.executive_assessment,
-        issues=[i.model_dump(mode="json") for i in val_model.issues],
-        limitations=val_model.limitations,
+        status=validation.status.value,
+        executive_assessment=validation.executive_assessment,
+        issues=[item.model_dump(mode="json") for item in validation.issues],
+        limitations=validation.limitations,
     )
 
     chart_data = _build_chart_data(
-        finance_bundle=fin_model,
-        analytics_result=da_model,
-        risk_analysis=risk_model,
+        finance_bundle=finance,
+        analytics_result=analytics,
+        risk_analysis=risk,
     )
 
-    # Determine version
     latest_version = db.scalar(
         select(Report.version)
         .where(Report.idea_id == run.idea_id)
         .order_by(desc(Report.version))
         .limit(1)
     )
-    report_version = (latest_version or 0) + 1
-
+    version = (latest_version or 0) + 1
     report_id = uuid4()
     now = datetime.now(timezone.utc)
 
@@ -458,10 +465,10 @@ def generate_structured_report(
         id=report_id,
         idea_id=run.idea_id,
         analysis_run_id=analysis_run_id,
-        version=report_version,
+        version=version,
         title=f"VentureMind Evaluation: {idea.title}",
-        executive_summary=dec_model.rationale,
-        decision=dec_model,
+        executive_summary=decision.rationale,
+        decision=decision,
         profile_summary=run.profile_snapshot.get("profile_data", {}),
         market=market_section,
         competitors=competitor_section,
@@ -476,15 +483,14 @@ def generate_structured_report(
         created_at=now,
     )
 
-    persisted_report = Report(
+    persisted = Report(
         id=report_id,
         idea_id=run.idea_id,
         analysis_run_id=analysis_run_id,
-        version=report_version,
+        version=version,
         report_data=structured_report.model_dump(mode="json"),
         created_at=now,
     )
-    db.add(persisted_report)
+    db.add(persisted)
     db.flush()
-
-    return persisted_report, structured_report
+    return persisted, structured_report
