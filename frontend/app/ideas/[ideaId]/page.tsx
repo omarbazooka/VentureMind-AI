@@ -1,1110 +1,619 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import React, { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useParams } from 'next/navigation';
 import {
-  getIdea,
-  getAnalysisProgress,
-  startAnalysis,
-  answerPendingInput,
-  getReport,
-  askReportQuestion,
-  executeReportAction,
-  compareReports,
-  IdeaItem,
-  AnalysisProgressResponse,
-  StructuredReport,
-  ReportQAResponse,
-  ReportActionResponse,
-  ReportComparisonResponse,
-} from '@/lib/api';
-import {
-  Sparkles,
-  Play,
+  AlertTriangle,
+  BarChart3,
   CheckCircle2,
   Clock,
-  AlertTriangle,
-  Send,
-  HelpCircle,
-  TrendingUp,
-  BarChart3,
-  ShieldCheck,
-  Award,
-  Layers,
-  FileText,
-  DollarSign,
-  Zap,
-  RotateCw,
-  GitCompare,
-  ArrowUpRight,
-  ArrowDownRight,
   ExternalLink,
+  FileText,
+  Play,
+  RotateCw,
+  Send,
+  ShieldCheck,
+  Sparkles,
 } from 'lucide-react';
 
-const PIPELINE_STAGE_LABELS: Record<string, string> = {
-  MARKET_RESEARCH: 'Market Research',
-  COMPETITOR_INTELLIGENCE: 'Competitor Intelligence',
-  CUSTOMER_INTELLIGENCE: 'Customer Signals',
-  BUSINESS_STRATEGY: 'Business Strategy',
-  FINANCE: 'DCF / Unit Finance',
-  DECISION_ANALYTICS: 'Decision Analytics',
-  RISK: 'Risk Matrix',
-  INDEPENDENT_VALIDATION: 'Validation Audit',
-  INVESTMENT_COMMITTEE: 'Investment Committee',
-};
+import {
+  AnalysisProgressResponse,
+  ChatMessage,
+  IdeaItem,
+  IdeaProfile,
+  ReportActionRequest,
+  StructuredReport,
+  answerPendingInput,
+  executeReportAction,
+  getAnalysisProgress,
+  getIdea,
+  getMessages,
+  getProfile,
+  getReport,
+  sendMessage,
+  startAnalysis,
+} from '@/lib/api';
 
-const STAGE_ORDER = [
-  'MARKET_RESEARCH',
-  'COMPETITOR_INTELLIGENCE',
-  'CUSTOMER_INTELLIGENCE',
-  'BUSINESS_STRATEGY',
-  'FINANCE',
-  'DECISION_ANALYTICS',
-  'RISK',
-  'INDEPENDENT_VALIDATION',
-  'INVESTMENT_COMMITTEE',
-];
+const STAGES = [
+  ['MARKET_RESEARCH', 'Market'],
+  ['COMPETITOR_INTELLIGENCE', 'Competitors'],
+  ['CUSTOMER_INTELLIGENCE', 'Customers'],
+  ['BUSINESS_STRATEGY', 'Strategy'],
+  ['FINANCE', 'Finance'],
+  ['DECISION_ANALYTICS', 'Analytics'],
+  ['RISK', 'Risk'],
+  ['INDEPENDENT_VALIDATION', 'Validation'],
+  ['INVESTMENT_COMMITTEE', 'Final Decision'],
+] as const;
+
+const REPORT_TABS = [
+  'overview',
+  'market',
+  'competitors',
+  'customers',
+  'strategy',
+  'finance',
+  'analytics',
+  'risk',
+  'validation',
+  'sources',
+] as const;
+
+type ReportTab = (typeof REPORT_TABS)[number];
+
+function humanize(value: string) {
+  return value.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function displayValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return 'Not provided';
+  if (Array.isArray(value)) return value.map(displayValue).join(', ');
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function metricValue(
+  scenario: StructuredReport['finance']['base_scenario'],
+  metricName: string,
+): string {
+  const metric = scenario.metrics.find((item) => item.metric_name === metricName);
+  if (!metric) return 'Unavailable';
+  const suffix = [metric.currency, metric.period ? `/ ${humanize(metric.period)}` : null]
+    .filter(Boolean)
+    .join(' ');
+  return `${metric.value}${suffix ? ` ${suffix}` : ''}`;
+}
+
+function findingText(item: Record<string, any>) {
+  return item.statement || item.relevance_summary || item.title || JSON.stringify(item);
+}
+
+function currentStageStatus(progress: AnalysisProgressResponse | null, stage: string) {
+  if (!progress) return 'PENDING';
+  const candidates = progress.stage_runs.filter((item) => item.stage === stage);
+  if (!candidates.length) return 'PENDING';
+  return candidates[candidates.length - 1].status;
+}
 
 export default function IdeaWorkspacePage() {
   const params = useParams();
-  const router = useRouter();
   const ideaId = params.ideaId as string;
 
   const [idea, setIdea] = useState<IdeaItem | null>(null);
+  const [profile, setProfile] = useState<IdeaProfile | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [progress, setProgress] = useState<AnalysisProgressResponse | null>(null);
   const [report, setReport] = useState<StructuredReport | null>(null);
-  const [activeTab, setActiveTab] = useState<string>('overview');
-
-  // Loading & error states
-  const [loading, setLoading] = useState(true);
-  const [startingAnalysis, setStartingAnalysis] = useState(false);
-  const [answeringInput, setAnsweringInput] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // User input answer form state
-  const [selectedOptionId, setSelectedOptionId] = useState<string>('');
-  const [customValue, setCustomValue] = useState<string>('');
-  const [useCustomValue, setUseCustomValue] = useState<boolean>(false);
-
-  // Report Q&A Assistant state
-  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; text: string; citations?: string[] }>>([
-    {
-      role: 'assistant',
-      text: 'Hello! I am your Investment Committee Due Diligence Assistant. Ask me anything about this venture\'s financial model, market dynamics, sensitivity drivers, or committee verdict.',
-    },
-  ]);
+  const [activeTab, setActiveTab] = useState<ReportTab>('overview');
   const [chatInput, setChatInput] = useState('');
-  const [askingQA, setAskingQA] = useState(false);
-  const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [answering, setAnswering] = useState(false);
+  const [selectedOption, setSelectedOption] = useState('');
+  const [customValue, setCustomValue] = useState('');
+  const [useCustom, setUseCustom] = useState(false);
+  const [actionOutput, setActionOutput] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // Report comparison state
-  const [comparison, setComparison] = useState<ReportComparisonResponse | null>(null);
-  const [loadingComparison, setLoadingComparison] = useState(false);
+  const readyForAnalysis = profile?.readiness === 'READY_FOR_ANALYSIS';
+  const analysisActive = progress && ['QUEUED', 'RUNNING', 'PAUSED_FOR_USER'].includes(progress.run_status);
 
-  // Poll progress while RUNNING or QUEUED
+  const profileEntries = useMemo(
+    () => Object.entries(profile?.profile_data || {}),
+    [profile],
+  );
+
   useEffect(() => {
-    loadWorkspaceData();
+    void loadWorkspace();
   }, [ideaId]);
 
   useEffect(() => {
-    if (!progress) return;
-    if (progress.run_status === 'RUNNING' || progress.run_status === 'QUEUED') {
-      const timer = setInterval(() => {
-        pollProgress();
-      }, 2500);
-      return () => clearInterval(timer);
-    }
-  }, [progress?.run_status]);
+    if (!analysisActive || progress?.run_status === 'PAUSED_FOR_USER') return;
+    const timer = window.setInterval(() => void refreshProgress(), 2500);
+    return () => window.clearInterval(timer);
+  }, [analysisActive, progress?.run_status]);
 
-  async function loadWorkspaceData() {
+  async function loadWorkspace() {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
-      const ideaData = await getIdea(ideaId);
+      const [ideaData, profileData, messageData, progressData] = await Promise.all([
+        getIdea(ideaId),
+        getProfile(ideaId),
+        getMessages(ideaId),
+        getAnalysisProgress(ideaId),
+      ]);
       setIdea(ideaData);
-
-      const progData = await getAnalysisProgress(ideaId);
-      setProgress(progData);
-
-      if (progData.has_report) {
-        const reportData = await getReport(ideaId);
-        setReport(reportData);
+      setProfile(profileData);
+      setMessages(messageData);
+      setProgress(progressData);
+      if (progressData.has_report) {
+        setReport(await getReport(ideaId));
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to load workspace data');
+      setError(err.message || 'Failed to load this idea workspace.');
     } finally {
       setLoading(false);
     }
   }
 
-  async function pollProgress() {
+  async function refreshProgress() {
     try {
-      const progData = await getAnalysisProgress(ideaId);
-      setProgress(progData);
-
-      if (progData.has_report && !report) {
-        const reportData = await getReport(ideaId);
-        setReport(reportData);
+      const next = await getAnalysisProgress(ideaId);
+      setProgress(next);
+      if (next.has_report && !report) {
+        setReport(await getReport(ideaId));
       }
-    } catch (err) {
-      console.error('Progress poll failed', err);
+    } catch (err: any) {
+      setError(err.message || 'Failed to refresh analysis progress.');
+    }
+  }
+
+  async function refreshProfile() {
+    setProfile(await getProfile(ideaId));
+  }
+
+  async function handleChatSubmit(event: FormEvent) {
+    event.preventDefault();
+    const content = chatInput.trim();
+    if (!content || sending) return;
+
+    setSending(true);
+    setError(null);
+    try {
+      const turn = await sendMessage(ideaId, content);
+      setMessages((previous) => [
+        ...previous,
+        turn.user_message,
+        turn.assistant_message,
+      ]);
+      setChatInput('');
+      await refreshProfile();
+    } catch (err: any) {
+      setError(err.message || 'Chat request failed.');
+    } finally {
+      setSending(false);
     }
   }
 
   async function handleStartAnalysis() {
+    if (!readyForAnalysis) return;
+    setStarting(true);
+    setError(null);
     try {
-      setStartingAnalysis(true);
-      setError(null);
       await startAnalysis(ideaId);
-      await pollProgress();
+      await refreshProgress();
     } catch (err: any) {
-      setError(err.message || 'Failed to start analysis');
+      setError(err.message || 'Could not start analysis.');
     } finally {
-      setStartingAnalysis(false);
+      setStarting(false);
     }
   }
 
-  async function handleAnswerInput(e: React.FormEvent) {
-    e.preventDefault();
-    if (!progress?.pending_input) return;
+  async function handleFinanceAnswer(event: FormEvent) {
+    event.preventDefault();
+    const pending = progress?.pending_input;
+    if (!pending) return;
 
+    setAnswering(true);
+    setError(null);
     try {
-      setAnsweringInput(true);
-      setError(null);
-
-      const inputId = progress.pending_input.input_id;
-
-      if (useCustomValue) {
-        if (!customValue || isNaN(Number(customValue))) {
-          setError('Please enter a valid numeric custom value');
-          setAnsweringInput(false);
-          return;
+      if (useCustom) {
+        const numericValue = Number(customValue);
+        if (!Number.isFinite(numericValue) || numericValue < 0) {
+          throw new Error('Enter a valid non-negative numeric value.');
         }
-        await answerPendingInput(ideaId, inputId, {
-          answer_mode: 'CUSTOM_INPUT',
-          custom_value: Number(customValue),
-          currency: progress.pending_input.currency || 'USD',
-          unit_label: progress.pending_input.unit_label || 'seat',
-          period: progress.pending_input.period || undefined,
+        await answerPendingInput(ideaId, pending.input_id, {
+          value: numericValue,
+          currency: pending.currency || undefined,
+          unit_label: pending.unit_label || undefined,
+          period: pending.period || undefined,
         });
       } else {
-        if (!selectedOptionId) {
-          setError('Please select an option or provide a custom value');
-          setAnsweringInput(false);
-          return;
-        }
-        await answerPendingInput(ideaId, inputId, {
-          answer_mode: 'SELECTED_OPTION',
-          selected_option_id: selectedOptionId,
-        });
+        if (!selectedOption) throw new Error('Select an option or choose custom value.');
+        await answerPendingInput(ideaId, pending.input_id, { choice: selectedOption });
       }
-
-      // Refresh progress immediately
-      await pollProgress();
+      setSelectedOption('');
+      setCustomValue('');
+      setUseCustom(false);
+      await refreshProgress();
     } catch (err: any) {
-      setError(err.message || 'Failed to submit assumption answer');
+      setError(err.message || 'Could not submit Finance input.');
     } finally {
-      setAnsweringInput(false);
+      setAnswering(false);
     }
   }
 
-  async function handleSendQAMessage(questionText?: string) {
-    const q = questionText || chatInput.trim();
-    if (!q || askingQA) return;
-
-    setChatMessages((prev) => [...prev, { role: 'user', text: q }]);
-    setChatInput('');
-    setAskingQA(true);
-
+  async function runReportAction(request: ReportActionRequest) {
+    setActionOutput('Loading grounded report data...');
     try {
-      const res: ReportQAResponse = await askReportQuestion(ideaId, q);
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          text: res.answer,
-          citations: res.cited_sections,
-        },
-      ]);
+      const response = await executeReportAction(ideaId, request);
+      setActionOutput(`${response.title}\n\n${response.content}`);
     } catch (err: any) {
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          text: `Sorry, I encountered an issue retrieving the grounded answer: ${err.message}`,
-        },
-      ]);
-    } finally {
-      setAskingQA(false);
-    }
-  }
-
-  async function handleActionClick(actionType: string) {
-    try {
-      setActionNotice(`Executing ${actionType.replace('_', ' ')}...`);
-      const res: ReportActionResponse = await executeReportAction(ideaId, actionType);
-      setActionNotice(`${res.summary}`);
-      // Also post result to chat
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          text: `**Action Executed: ${actionType}**\n\n${res.summary}`,
-        },
-      ]);
-    } catch (err: any) {
-      setActionNotice(`Action failed: ${err.message}`);
-    }
-  }
-
-  async function handleLoadComparison() {
-    try {
-      setLoadingComparison(true);
-      const comp = await compareReports(ideaId, 1, 2);
-      setComparison(comp);
-    } catch (err: any) {
-      setError(`Comparison failed: ${err.message}`);
-    } finally {
-      setLoadingComparison(false);
+      setActionOutput(`Action failed: ${err.message}`);
     }
   }
 
   if (loading) {
     return (
-      <div className="container" style={{ textAlign: 'center', padding: '96px 0', color: 'var(--text-muted)' }}>
-        <div className="spin" style={{ display: 'inline-block', marginBottom: '16px' }}>
-          <Sparkles size={32} color="var(--primary)" />
-        </div>
-        <h2 style={{ fontSize: '20px', fontWeight: 600 }}>Loading Due Diligence Workspace...</h2>
+      <div className="container" style={{ padding: '80px 0', textAlign: 'center' }}>
+        <span className="spin"><Sparkles size={28} /></span>
+        <p style={{ color: 'var(--text-muted)', marginTop: 12 }}>Loading idea workspace…</p>
       </div>
     );
   }
 
   if (!idea) {
-    return (
-      <div className="container" style={{ textAlign: 'center', padding: '96px 0' }}>
-        <h2 style={{ fontSize: '24px', fontWeight: 700, marginBottom: '12px' }}>Venture Record Not Found</h2>
-        <button onClick={() => router.push('/dashboard')} className="btn btn-primary">
-          Back to Dashboard
-        </button>
-      </div>
-    );
+    return <div className="container"><p>Idea not found.</p></div>;
   }
 
   return (
-    <div className="container">
-      {/* Top Workspace Header */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-        gap: '20px',
-        marginBottom: '28px',
-        paddingBottom: '24px',
-        borderBottom: '1px solid var(--border)',
-      }}>
-        <div style={{ maxWidth: '800px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-            <h1 style={{ fontSize: '32px', fontWeight: 800, letterSpacing: '-0.02em' }}>
-              {idea.title}
-            </h1>
-            <span className={`badge ${
-              progress?.run_status === 'COMPLETED' ? 'badge-go' :
-              progress?.run_status === 'PAUSED_FOR_USER' ? 'badge-caution' :
-              progress?.run_status === 'FAILED' ? 'badge-no-go' : 'badge-neutral'
-            }`}>
-              {progress?.run_status || 'NOT_STARTED'}
-            </span>
-          </div>
-          <p style={{ color: 'var(--text-muted)', fontSize: '15px', lineHeight: 1.5 }}>
-            {idea.description}
-          </p>
-        </div>
-
+    <div className="container" style={{ paddingBottom: 48 }}>
+      <header style={{ display: 'flex', justifyContent: 'space-between', gap: 20, alignItems: 'flex-start', marginBottom: 24 }}>
         <div>
-          {(!progress || progress.run_status === 'NOT_STARTED') && (
-            <button
-              onClick={handleStartAnalysis}
-              className="btn btn-primary"
-              disabled={startingAnalysis}
-              style={{ padding: '12px 24px', fontSize: '15px' }}
-            >
-              {startingAnalysis ? (
-                <>
-                  <span className="spin"><Sparkles size={18} /></span>
-                  <span>Initiating...</span>
-                </>
-              ) : (
-                <>
-                  <Play size={18} />
-                  <span>Start Due Diligence Pipeline</span>
-                </>
-              )}
-            </button>
-          )}
-
-          {progress?.run_status === 'COMPLETED' && (
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button
-                onClick={() => router.push(`/ideas/new`)}
-                className="btn btn-secondary"
-              >
-                <span>New Venture</span>
-              </button>
-            </div>
-          )}
+          <div style={{ color: 'var(--primary-light)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>Idea Workspace</div>
+          <h1 style={{ fontSize: 30, marginTop: 6 }}>{idea.title}</h1>
+          <p style={{ color: 'var(--text-muted)', maxWidth: 760, marginTop: 8 }}>{idea.description}</p>
         </div>
-      </div>
+        <span className="badge badge-neutral">{progress?.run_status || 'NOT_STARTED'}</span>
+      </header>
 
-      {/* Error Alert */}
       {error && (
-        <div className="card" style={{ borderColor: 'var(--danger-border)', backgroundColor: 'var(--danger-bg)', marginBottom: '24px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--danger)' }}>
+        <div className="card" style={{ borderColor: 'var(--danger-border)', marginBottom: 20 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: 'var(--danger)' }}>
             <AlertTriangle size={18} />
-            <strong>System Notification</strong>
+            <strong>{error}</strong>
           </div>
-          <p style={{ marginTop: '6px', fontSize: '14px' }}>{error}</p>
         </div>
       )}
 
-      {/* Live 9-Stage Pipeline Tracker */}
-      {progress && progress.run_status !== 'NOT_STARTED' && (
-        <section className="card" style={{ marginBottom: '32px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Layers size={18} color="var(--primary-light)" />
-              <h2 style={{ fontSize: '16px', fontWeight: 700 }}>Autonomous Pipeline Stages</h2>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(320px, .65fr)', gap: 20, alignItems: 'start' }}>
+        <main>
+          <section className="card" style={{ minHeight: 420, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--border)', paddingBottom: 14 }}>
+              <Sparkles size={18} color="var(--primary-light)" />
+              <div>
+                <strong>Chat AI</strong>
+                <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Grounded in this idea, its profile, and available analysis state.</div>
+              </div>
             </div>
-            <div style={{ fontSize: '13px', color: 'var(--text-dim)' }}>
-              Completed: {progress.completed_stages.length} / {STAGE_ORDER.length}
-            </div>
-          </div>
 
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
-            gap: '8px',
-          }}>
-            {STAGE_ORDER.map((stageKey, idx) => {
-              const isCompleted = progress.completed_stages.includes(stageKey);
-              const isCurrent = progress.current_stage === stageKey;
-              const isPaused = progress.run_status === 'PAUSED_FOR_USER' && isCurrent;
-
-              return (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, padding: '18px 0', maxHeight: 520, overflowY: 'auto' }}>
+              {messages.length === 0 && (
+                <div style={{ color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.6 }}>
+                  Describe the customer, problem, geography, business model, pricing, or anything else you already know. VentureMind will update the structured Idea Profile and ask the highest-value clarification when needed.
+                </div>
+              )}
+              {messages.map((message) => (
                 <div
-                  key={stageKey}
+                  key={message.id}
                   style={{
-                    padding: '12px 10px',
-                    borderRadius: 'var(--radius-md)',
-                    backgroundColor: isCurrent ? 'var(--primary-subtle)' : 'var(--bg-card)',
-                    border: `1px solid ${
-                      isPaused ? 'var(--warning)' :
-                      isCurrent ? 'var(--primary)' :
-                      isCompleted ? 'var(--success-border)' : 'var(--border)'
-                    }`,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    minHeight: '80px',
-                    transition: 'all 0.2s ease',
+                    alignSelf: message.role === 'user' ? 'flex-end' : 'flex-start',
+                    maxWidth: '86%',
+                    padding: '10px 13px',
+                    borderRadius: 12,
+                    whiteSpace: 'pre-wrap',
+                    background: message.role === 'user' ? 'var(--primary)' : 'var(--bg-card)',
+                    border: message.role === 'user' ? 'none' : '1px solid var(--border)',
+                    fontSize: 14,
+                    lineHeight: 1.55,
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                    <span style={{ fontSize: '11px', color: 'var(--text-dim)', fontWeight: 600 }}>
-                      0{idx + 1}
-                    </span>
-                    {isCompleted ? (
-                      <CheckCircle2 size={16} color="var(--success)" />
-                    ) : isPaused ? (
-                      <AlertTriangle size={16} color="var(--warning)" />
-                    ) : isCurrent ? (
-                      <span className="spin"><RotateCw size={14} color="var(--primary)" /></span>
-                    ) : (
-                      <Clock size={14} color="var(--text-dim)" />
-                    )}
-                  </div>
-                  <div style={{
-                    fontSize: '12px',
-                    fontWeight: isCurrent || isCompleted ? 600 : 400,
-                    color: isCurrent ? 'var(--primary-light)' : isCompleted ? 'var(--text-main)' : 'var(--text-muted)',
-                    lineHeight: 1.3,
-                  }}>
-                    {PIPELINE_STAGE_LABELS[stageKey] || stageKey}
-                  </div>
+                  {message.content}
                 </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+              ))}
+            </div>
 
-      {/* Human-in-the-loop User Input Pause Card */}
-      {progress?.run_status === 'PAUSED_FOR_USER' && progress.pending_input && (
-        <section className="card pulsing" style={{
-          borderColor: 'var(--warning)',
-          backgroundColor: 'rgba(245, 158, 11, 0.05)',
-          marginBottom: '32px',
-          padding: '28px',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--warning)', marginBottom: '12px' }}>
-            <AlertTriangle size={24} />
-            <h3 style={{ fontSize: '20px', fontWeight: 700 }}>
-              Action Required: Financial Assumption Input
-            </h3>
-          </div>
+            <form onSubmit={handleChatSubmit} style={{ display: 'flex', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+              <input
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                placeholder={report ? 'Ask about the report, evidence, finance, or risks…' : 'Tell VentureMind more about the idea…'}
+                disabled={sending}
+                style={{ flex: 1, padding: '11px 13px', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-main)' }}
+              />
+              <button className="btn btn-primary" disabled={sending || !chatInput.trim()}>
+                {sending ? <span className="spin"><RotateCw size={15} /></span> : <Send size={15} />}
+              </button>
+            </form>
+          </section>
 
-          <p style={{ fontSize: '16px', color: 'var(--text-main)', marginBottom: '20px', lineHeight: 1.5 }}>
-            {progress.pending_input.question}
-          </p>
-
-          <form onSubmit={handleAnswerInput}>
-            {/* Options list */}
-            {progress.pending_input.options && progress.pending_input.options.length > 0 && (
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                gap: '12px',
-                marginBottom: '20px',
-              }}>
-                {progress.pending_input.options.map((opt) => (
-                  <div
-                    key={opt.option_id}
-                    onClick={() => {
-                      setSelectedOptionId(opt.option_id);
-                      setUseCustomValue(false);
-                    }}
-                    style={{
-                      padding: '16px',
-                      borderRadius: 'var(--radius-md)',
-                      backgroundColor: selectedOptionId === opt.option_id && !useCustomValue ? 'var(--primary-subtle)' : 'var(--bg-surface)',
-                      border: `1px solid ${selectedOptionId === opt.option_id && !useCustomValue ? 'var(--primary)' : 'var(--border)'}`,
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                    }}
-                  >
-                    <div style={{ fontWeight: 700, fontSize: '16px', marginBottom: '4px', color: 'var(--text-main)' }}>
-                      {progress.pending_input?.currency || '$'}{opt.value}
-                    </div>
-                    <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--primary-light)', marginBottom: '4px' }}>
-                      {opt.label}
-                    </div>
-                    {opt.description && (
-                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                        {opt.description}
-                      </div>
+          {progress?.run_status === 'PAUSED_FOR_USER' && progress.pending_input && (
+            <section className="card" style={{ marginTop: 20, borderColor: 'var(--warning)' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: 'var(--warning)' }}>
+                <AlertTriangle size={20} />
+                <h2 style={{ fontSize: 18 }}>Finance needs one decision-critical input</h2>
+              </div>
+              <p style={{ margin: '12px 0 18px', color: 'var(--text-muted)' }}>{progress.pending_input.question}</p>
+              <form onSubmit={handleFinanceAnswer}>
+                {!!progress.pending_input.options.length && (
+                  <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
+                    {progress.pending_input.options.map((option) => (
+                      <label key={option.option_id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: 12, border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer' }}>
+                        <input
+                          type="radio"
+                          name="finance-option"
+                          checked={!useCustom && selectedOption === option.option_id}
+                          onChange={() => { setUseCustom(false); setSelectedOption(option.option_id); }}
+                        />
+                        <span>
+                          <strong>{option.label}</strong>
+                          <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 13, marginTop: 3 }}>
+                            {displayValue(option.value)} {option.currency || progress.pending_input?.currency || ''} {option.unit_label ? `/ ${option.unit_label}` : ''}
+                          </span>
+                          {option.rationale && <span style={{ display: 'block', color: 'var(--text-dim)', fontSize: 12, marginTop: 4 }}>{option.rationale}</span>}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {progress.pending_input.allow_custom && (
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                      <input type="checkbox" checked={useCustom} onChange={(event) => setUseCustom(event.target.checked)} />
+                      Use a custom value
+                    </label>
+                    {useCustom && (
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={customValue}
+                        onChange={(event) => setCustomValue(event.target.value)}
+                        placeholder="Enter value"
+                        style={{ width: '100%', padding: '10px 12px', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-main)' }}
+                      />
                     )}
                   </div>
+                )}
+                <button className="btn btn-primary" disabled={answering}>
+                  {answering ? <span className="spin"><RotateCw size={15} /></span> : <Play size={15} />}
+                  Submit & Resume
+                </button>
+              </form>
+            </section>
+          )}
+
+          {report && (
+            <section style={{ marginTop: 20 }}>
+              <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 10 }}>
+                {REPORT_TABS.map((tab) => (
+                  <button
+                    key={tab}
+                    className={activeTab === tab ? 'btn btn-primary' : 'btn btn-secondary'}
+                    onClick={() => setActiveTab(tab)}
+                    style={{ whiteSpace: 'nowrap', fontSize: 12 }}
+                  >
+                    {humanize(tab)}
+                  </button>
                 ))}
               </div>
-            )}
 
-            {/* Custom value toggle */}
-            {progress.pending_input.allow_custom && (
-              <div style={{ marginBottom: '24px' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: '8px', fontSize: '14px', fontWeight: 500 }}>
-                  <input
-                    type="checkbox"
-                    checked={useCustomValue}
-                    onChange={(e) => setUseCustomValue(e.target.checked)}
-                  />
-                  <span>Provide custom value instead</span>
-                </label>
-
-                {useCustomValue && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', maxWidth: '300px' }}>
-                    <span style={{ fontSize: '16px', color: 'var(--text-muted)' }}>
-                      {progress.pending_input.currency || '$'}
-                    </span>
-                    <input
-                      type="number"
-                      step="any"
-                      placeholder="Enter amount..."
-                      value={customValue}
-                      onChange={(e) => setCustomValue(e.target.value)}
-                      style={{
-                        flex: 1,
-                        padding: '10px 14px',
-                        backgroundColor: 'var(--bg-surface)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 'var(--radius-md)',
-                        color: 'var(--text-main)',
-                        fontSize: '15px',
-                        outline: 'none',
-                      }}
-                    />
-                    {progress.pending_input.unit_label && (
-                      <span style={{ fontSize: '13px', color: 'var(--text-dim)' }}>
-                        /{progress.pending_input.unit_label}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={answeringInput}
-              style={{ minWidth: '180px' }}
-            >
-              {answeringInput ? (
-                <>
-                  <span className="spin"><RotateCw size={16} /></span>
-                  <span>Resuming Pipeline...</span>
-                </>
-              ) : (
-                <>
-                  <span>Submit & Resume Pipeline</span>
-                  <Play size={16} />
-                </>
-              )}
-            </button>
-          </form>
-        </section>
-      )}
-
-      {/* Structured Report Tabs & Q&A Assistant Workspace */}
-      {report && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: '24px', alignItems: 'start' }}>
-          {/* Main Report Column */}
-          <div>
-            {/* Tabs Header */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              borderBottom: '1px solid var(--border)',
-              marginBottom: '24px',
-              overflowX: 'auto',
-              paddingBottom: '2px',
-            }}>
-              {[
-                { id: 'overview', label: 'Executive Verdict' },
-                { id: 'market', label: 'Market & Competitors' },
-                { id: 'finance', label: 'Finance & DCF' },
-                { id: 'analytics', label: 'Sensitivity Ranking' },
-                { id: 'risks', label: 'Risk Matrix' },
-                { id: 'validation', label: 'Validation Audit' },
-                { id: 'sources', label: 'Evidence Sources' },
-                { id: 'compare', label: 'Compare Versions' },
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  style={{
-                    padding: '10px 16px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    color: activeTab === tab.id ? 'var(--primary-light)' : 'var(--text-muted)',
-                    backgroundColor: activeTab === tab.id ? 'var(--bg-surface)' : 'transparent',
-                    border: 'none',
-                    borderBottom: activeTab === tab.id ? '2px solid var(--primary)' : '2px solid transparent',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                    borderRadius: 'var(--radius-sm) var(--radius-sm) 0 0',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            {/* TAB 1: EXECUTIVE VERDICT */}
-            {activeTab === 'overview' && (
-              <div>
-                {/* Verdict Hero Card */}
-                <div className="card" style={{
-                  borderLeft: `4px solid ${
-                    report.investment_committee?.decision === 'GO' ? 'var(--success)' :
-                    report.investment_committee?.decision === 'CONDITIONAL_GO' ? 'var(--warning)' : 'var(--danger)'
-                  }`,
-                  marginBottom: '24px',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <Award size={24} color="var(--primary-light)" />
-                      <h3 style={{ fontSize: '20px', fontWeight: 700 }}>Investment Committee Verdict</h3>
-                    </div>
-                    <span className={`badge ${
-                      report.investment_committee?.decision === 'GO' ? 'badge-go' :
-                      report.investment_committee?.decision === 'CONDITIONAL_GO' ? 'badge-caution' : 'badge-no-go'
-                    }`} style={{ fontSize: '14px', padding: '6px 14px' }}>
-                      {report.investment_committee?.decision}
-                    </span>
-                  </div>
-
-                  <p style={{ fontSize: '15px', color: 'var(--text-main)', lineHeight: 1.6, marginBottom: '16px' }}>
-                    {report.investment_committee?.decision_rationale || report.executive_summary?.summary_narrative}
-                  </p>
-
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-                    gap: '12px',
-                    paddingTop: '16px',
-                    borderTop: '1px solid var(--border)',
-                  }}>
-                    <div>
-                      <div className="metric-label">Decision Confidence</div>
-                      <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-main)' }}>
-                        {report.investment_committee?.confidence || 'HIGH'}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="metric-label">Report Version</div>
-                      <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-main)' }}>
-                        v{report.version} (Authoritative)
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Key Strengths & Critical Conditions */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '24px' }}>
-                  <div className="card">
-                    <h4 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--success)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <CheckCircle2 size={16} />
-                      <span>Positive Investment Signals</span>
-                    </h4>
-                    <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {(report.investment_committee?.positive_signals || report.executive_summary?.key_strengths || []).map((sig, i) => (
-                        <li key={i} style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.5, display: 'flex', gap: '8px' }}>
-                          <span style={{ color: 'var(--success)' }}>•</span>
-                          <span>{sig}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="card">
-                    <h4 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--warning)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <AlertTriangle size={16} />
-                      <span>Critical Conditions & Milestones</span>
-                    </h4>
-                    <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {(report.investment_committee?.critical_conditions || report.executive_summary?.critical_risks || []).map((cond, i) => (
-                        <li key={i} style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.5, display: 'flex', gap: '8px' }}>
-                          <span style={{ color: 'var(--warning)' }}>•</span>
-                          <span>{cond}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 2: MARKET & COMPETITORS */}
-            {activeTab === 'market' && (
               <div className="card">
-                <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '16px' }}>Market & Competitor Intelligence</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '24px' }}>
-                  <div className="metric-box">
-                    <div className="metric-label">TAM Estimate</div>
-                    <div className="metric-value">{report.market_intelligence?.tam_sam_som?.tam_estimate || 'Insufficient Data'}</div>
-                  </div>
-                  <div className="metric-box">
-                    <div className="metric-label">SAM Estimate</div>
-                    <div className="metric-value">{report.market_intelligence?.tam_sam_som?.sam_estimate || 'Insufficient Data'}</div>
-                  </div>
-                  <div className="metric-box">
-                    <div className="metric-label">SOM Estimate</div>
-                    <div className="metric-value">{report.market_intelligence?.tam_sam_som?.som_estimate || 'Insufficient Data'}</div>
-                  </div>
-                </div>
-
-                <div style={{ marginBottom: '24px' }}>
-                  <h4 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', marginBottom: '8px' }}>
-                    Competitive Moat & Advantage
-                  </h4>
-                  <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                    {report.competitor_intelligence?.competitive_moat || 'Differentiated by autonomous AI pipeline orchestration.'}
-                  </p>
-                </div>
-
-                <div>
-                  <h4 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', marginBottom: '12px' }}>
-                    Direct Competitors Analyzed
-                  </h4>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {(report.competitor_intelligence?.direct_competitors || []).map((comp, idx) => (
-                      <div key={idx} style={{ padding: '12px', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-                        <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>{comp.name}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Pricing: {comp.pricing_model || 'Subscription SaaS'}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 3: FINANCE & DCF */}
-            {activeTab === 'finance' && (
-              <div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-                  <div className="metric-box">
-                    <div className="metric-label">Net Present Value (NPV)</div>
-                    <div className="metric-value" style={{ color: 'var(--primary-light)' }}>
-                      ${report.financial_analysis?.key_metrics?.net_present_value?.value || '0.00'}
-                    </div>
-                    <div className="metric-sub">5-Year Modeled Cashflow</div>
-                  </div>
-
-                  <div className="metric-box">
-                    <div className="metric-label">Internal Rate of Return</div>
-                    <div className="metric-value" style={{ color: 'var(--success)' }}>
-                      {report.financial_analysis?.key_metrics?.internal_rate_of_return?.value || 'N/A'}
-                    </div>
-                    <div className="metric-sub">Annualized IRR</div>
-                  </div>
-
-                  <div className="metric-box">
-                    <div className="metric-label">Payback Period</div>
-                    <div className="metric-value">
-                      {report.financial_analysis?.key_metrics?.payback_period_months?.value || 'N/A'} mo
-                    </div>
-                    <div className="metric-sub">Break-even capital recovery</div>
-                  </div>
-
-                  <div className="metric-box">
-                    <div className="metric-label">Monthly Burn Rate</div>
-                    <div className="metric-value" style={{ color: 'var(--warning)' }}>
-                      ${report.financial_analysis?.key_metrics?.monthly_burn_rate?.value || '0.00'}
-                    </div>
-                    <div className="metric-sub">Fixed & variable cash burn</div>
-                  </div>
-                </div>
-
-                <div className="card">
-                  <h4 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '12px' }}>Unit Economics & Scenario Analysis</h4>
-                  <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                    All financial values are authoritatively derived from validated stage outputs and sensitivity models without artificial extrapolation.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 4: SENSITIVITY RANKING */}
-            {activeTab === 'analytics' && (
-              <div className="card">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                  <TrendingUp size={20} color="var(--primary-light)" />
-                  <h3 style={{ fontSize: '18px', fontWeight: 700 }}>Sensitivity Ranking (Elasticity Drivers)</h3>
-                </div>
-                <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '20px', lineHeight: 1.5 }}>
-                  Ranks input variables by their impact on overall venture viability and cashflow elasticity.
-                </p>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {(report.decision_analytics?.sensitivity_ranking || [
-                    { input_name: 'Selling Price Per Unit', elasticity_score: 1.85, impact_level: 'HIGH' },
-                    { input_name: 'Sales Volume Growth', elasticity_score: 1.42, impact_level: 'HIGH' },
-                    { input_name: 'Variable Cost Per Unit', elasticity_score: 0.88, impact_level: 'MEDIUM' },
-                    { input_name: 'Fixed Operational Costs', elasticity_score: 0.65, impact_level: 'LOW' },
-                  ]).map((item, idx) => (
-                    <div key={idx} style={{
-                      padding: '14px',
-                      backgroundColor: 'var(--bg-card)',
-                      borderRadius: 'var(--radius-md)',
-                      border: '1px solid var(--border)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                    }}>
+                {activeTab === 'overview' && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' }}>
                       <div>
-                        <div style={{ fontWeight: 600, fontSize: '15px' }}>{item.input_name}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
-                          Elasticity: {item.elasticity_score}
-                        </div>
+                        <div className="metric-label">Final Decision</div>
+                        <h2 style={{ fontSize: 28, marginTop: 6 }}>{report.decision.decision}</h2>
                       </div>
-                      <span className={`badge ${
-                        item.impact_level === 'HIGH' ? 'badge-no-go' :
-                        item.impact_level === 'MEDIUM' ? 'badge-caution' : 'badge-neutral'
-                      }`}>
-                        {item.impact_level} IMPACT
-                      </span>
+                      <span className="badge badge-neutral">Confidence: {report.decision.confidence}</span>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* TAB 5: RISK MATRIX */}
-            {activeTab === 'risks' && (
-              <div className="card">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                  <ShieldCheck size={20} color="var(--warning)" />
-                  <h3 style={{ fontSize: '18px', fontWeight: 700 }}>Identified Risks & Mitigations</h3>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                  {(report.risk_assessment?.identified_risks || []).map((risk, idx) => (
-                    <div key={idx} style={{
-                      padding: '16px',
-                      backgroundColor: 'var(--bg-card)',
-                      borderRadius: 'var(--radius-md)',
-                      border: '1px solid var(--border)',
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                        <span style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text-main)' }}>
-                          {risk.title}
-                        </span>
-                        <div style={{ display: 'flex', gap: '6px' }}>
-                          <span className="badge badge-neutral" style={{ fontSize: '11px' }}>
-                            {risk.category}
-                          </span>
-                          <span className={`badge ${risk.impact === 'HIGH' ? 'badge-no-go' : 'badge-caution'}`} style={{ fontSize: '11px' }}>
-                            {risk.impact} IMPACT
-                          </span>
-                        </div>
+                    <p style={{ color: 'var(--text-muted)', lineHeight: 1.65, marginTop: 16 }}>{report.decision.rationale}</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginTop: 22 }}>
+                      <div>
+                        <h3 style={{ fontSize: 14, marginBottom: 8 }}>Positive signals</h3>
+                        {report.decision.strongest_positive_signals.length ? report.decision.strongest_positive_signals.map((item) => <p key={item} style={{ color: 'var(--text-muted)', marginBottom: 6 }}>• {item}</p>) : <p style={{ color: 'var(--text-dim)' }}>None recorded.</p>}
                       </div>
-
-                      {risk.mitigation_actions && risk.mitigation_actions.length > 0 && (
-                        <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                          <strong>Mitigation:</strong> {risk.mitigation_actions.join('; ')}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* TAB 6: VALIDATION AUDIT */}
-            {activeTab === 'validation' && (
-              <div className="card">
-                <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '16px' }}>Independent Validation & Audit Checkpoint</h3>
-                <div style={{ marginBottom: '20px' }}>
-                  <div className="metric-label">Assessment Status</div>
-                  <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--success)' }}>
-                    {report.independent_validation?.assessment_status || 'VERIFIED_AND_GROUNDED'}
-                  </div>
-                </div>
-
-                <div>
-                  <h4 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-dim)', marginBottom: '8px' }}>
-                    Limitations & Audit Notes
-                  </h4>
-                  <ul style={{ listStyle: 'disc', paddingLeft: '20px', color: 'var(--text-muted)', fontSize: '13px', lineHeight: 1.6 }}>
-                    {(report.independent_validation?.limitations || ['No ungrounded financial claims detected.']).map((lim, i) => (
-                      <li key={i}>{lim}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 7: EVIDENCE SOURCES */}
-            {activeTab === 'sources' && (
-              <div className="card">
-                <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '16px' }}>Evidence Ledger</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {(report.sources_ledger || []).map((src, i) => (
-                    <div key={i} style={{ padding: '12px', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-                      <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-main)', marginBottom: '4px' }}>
-                        {src.title}
+                      <div>
+                        <h3 style={{ fontSize: 14, marginBottom: 8 }}>Negative signals</h3>
+                        {report.decision.strongest_negative_signals.length ? report.decision.strongest_negative_signals.map((item) => <p key={item} style={{ color: 'var(--text-muted)', marginBottom: 6 }}>• {item}</p>) : <p style={{ color: 'var(--text-dim)' }}>None recorded.</p>}
                       </div>
-                      <div style={{ fontSize: '12px', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span>Stage: {src.stage}</span>
-                        {src.url && (
-                          <a href={src.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary-light)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                            <span>Source Link</span>
-                            <ExternalLink size={12} />
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* TAB 8: COMPARE VERSIONS */}
-            {activeTab === 'compare' && (
-              <div className="card">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-                  <div>
-                    <h3 style={{ fontSize: '18px', fontWeight: 700 }}>Version Comparison & Diff</h3>
-                    <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                      Compare baseline Report v1 against re-analyzed Report v2.
-                    </p>
-                  </div>
-                  {!comparison && (
-                    <button
-                      onClick={handleLoadComparison}
-                      className="btn btn-secondary"
-                      disabled={loadingComparison}
-                    >
-                      <GitCompare size={16} />
-                      <span>{loadingComparison ? 'Comparing...' : 'Run Version Diff'}</span>
-                    </button>
-                  )}
-                </div>
-
-                {comparison && (
-                  <div>
-                    <div style={{
-                      padding: '16px',
-                      backgroundColor: 'var(--primary-subtle)',
-                      borderRadius: 'var(--radius-md)',
-                      marginBottom: '20px',
-                      border: '1px solid rgba(147, 62, 207, 0.3)',
-                    }}>
-                      <div style={{ fontWeight: 700, fontSize: '14px', color: 'var(--primary-light)', marginBottom: '4px' }}>
-                        Executive Takeaway
-                      </div>
-                      <div style={{ fontSize: '14px', color: 'var(--text-main)', lineHeight: 1.5 }}>
-                        {comparison.executive_takeaway}
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {comparison.financial_comparison.map((item, idx) => (
-                        <div key={idx} style={{
-                          padding: '12px',
-                          backgroundColor: 'var(--bg-card)',
-                          borderRadius: 'var(--radius-md)',
-                          border: '1px solid var(--border)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                        }}>
-                          <span style={{ fontSize: '14px', fontWeight: 600 }}>{item.metric_name}</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>v1: {item.v1_value ?? 'None'}</span>
-                            <span>→</span>
-                            <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-main)' }}>v2: {item.v2_value ?? 'None'}</span>
-                            <span className={`badge ${item.direction === 'UP' ? 'badge-go' : item.direction === 'DOWN' ? 'badge-no-go' : 'badge-neutral'}`}>
-                              {item.direction}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
                     </div>
                   </div>
                 )}
-              </div>
-            )}
-          </div>
 
-          {/* Right Column: Grounded Report Q&A Assistant */}
-          <div className="card" style={{
-            position: 'sticky',
-            top: '88px',
-            display: 'flex',
-            flexDirection: 'column',
-            height: 'calc(100vh - 120px)',
-            padding: '20px',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
-              <Sparkles size={18} color="var(--primary)" />
-              <h3 style={{ fontSize: '16px', fontWeight: 700 }}>Due Diligence Assistant</h3>
-            </div>
-
-            {/* Quick Action Buttons */}
-            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
-              <button
-                onClick={() => handleActionClick('SIMULATE_PRICE_DROP')}
-                className="btn btn-secondary"
-                style={{ fontSize: '11px', padding: '5px 10px' }}
-              >
-                <Zap size={12} color="var(--warning)" />
-                <span>-20% Price Sim</span>
-              </button>
-              <button
-                onClick={() => handleActionClick('DOWNLOAD_SUMMARY')}
-                className="btn btn-secondary"
-                style={{ fontSize: '11px', padding: '5px 10px' }}
-              >
-                <FileText size={12} color="var(--secondary)" />
-                <span>Export Memo</span>
-              </button>
-            </div>
-
-            {actionNotice && (
-              <div style={{
-                fontSize: '11px',
-                padding: '6px 10px',
-                backgroundColor: 'var(--primary-subtle)',
-                color: 'var(--primary-light)',
-                borderRadius: 'var(--radius-sm)',
-                marginBottom: '10px',
-              }}>
-                {actionNotice}
-              </div>
-            )}
-
-            {/* Chat Message Stream */}
-            <div style={{
-              flex: 1,
-              overflowY: 'auto',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '12px',
-              paddingRight: '4px',
-              marginBottom: '14px',
-            }}>
-              {chatMessages.map((msg, i) => (
-                <div
-                  key={i}
-                  style={{
-                    alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                    maxWidth: '92%',
-                    backgroundColor: msg.role === 'user' ? 'var(--primary)' : 'var(--bg-card)',
-                    color: '#fff',
-                    padding: '10px 14px',
-                    borderRadius: 'var(--radius-md)',
-                    fontSize: '13px',
-                    lineHeight: 1.5,
-                  }}
-                >
-                  <p style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</p>
-                  {msg.citations && msg.citations.length > 0 && (
-                    <div style={{ fontSize: '10px', color: 'rgba(255, 255, 255, 0.7)', marginTop: '6px', borderTop: '1px solid rgba(255, 255, 255, 0.15)', paddingTop: '4px' }}>
-                      Cited: {msg.citations.join(', ')}
+                {activeTab === 'market' && (
+                  <div>
+                    <h2 style={{ marginBottom: 8 }}>Market Intelligence</h2>
+                    <p style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>{report.market.summary}</p>
+                    <p style={{ marginTop: 10, fontSize: 13 }}>Evidence quality: <strong>{report.market.evidence_quality}</strong></p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginTop: 18 }}>
+                      {(['tam', 'sam', 'som'] as const).map((name) => {
+                        const metric = report.market.market_metrics[name];
+                        return <div className="metric-box" key={name}><div className="metric-label">{name.toUpperCase()}</div><div className="metric-value">{metric.value || humanize(metric.status)}</div>{metric.explanation && <div className="metric-sub">{metric.explanation}</div>}</div>;
+                      })}
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
+                    <div style={{ marginTop: 18 }}>{report.market.findings.map((item, index) => <p key={index} style={{ color: 'var(--text-muted)', marginBottom: 8 }}>• {findingText(item)}</p>)}</div>
+                  </div>
+                )}
 
-            {/* Chat Input */}
-            <div style={{ display: 'flex', gap: '8px', borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
-              <input
-                type="text"
-                placeholder="Ask about this venture..."
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleSendQAMessage();
-                }}
-                disabled={askingQA}
-                style={{
-                  flex: 1,
-                  padding: '10px 14px',
-                  backgroundColor: 'var(--bg-base)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-md)',
-                  color: 'var(--text-main)',
-                  fontSize: '13px',
-                  outline: 'none',
-                }}
-              />
-              <button
-                onClick={() => handleSendQAMessage()}
-                className="btn btn-primary"
-                disabled={askingQA || !chatInput.trim()}
-                style={{ padding: '10px 14px' }}
-              >
-                {askingQA ? <span className="spin"><RotateCw size={14} /></span> : <Send size={14} />}
+                {activeTab === 'competitors' && (
+                  <div>
+                    <h2>Competitor Intelligence</h2>
+                    <p style={{ color: 'var(--text-muted)', lineHeight: 1.6, margin: '8px 0 16px' }}>{report.competitors.summary}</p>
+                    {report.competitors.competitors.map((competitor, index) => (
+                      <div key={index} style={{ padding: 12, border: '1px solid var(--border)', borderRadius: 10, marginBottom: 8 }}>
+                        <strong>{competitor.name || `Competitor ${index + 1}`}</strong>
+                        {competitor.relationship && <span style={{ marginLeft: 8, color: 'var(--text-dim)', fontSize: 12 }}>{competitor.relationship}</span>}
+                        {competitor.relevance_summary && <p style={{ color: 'var(--text-muted)', marginTop: 6 }}>{competitor.relevance_summary}</p>}
+                        {competitor.pricing?.statement && <p style={{ color: 'var(--text-muted)', marginTop: 6 }}>Pricing evidence: {competitor.pricing.statement}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {activeTab === 'customers' && (
+                  <div>
+                    <h2>Customer Intelligence</h2>
+                    <p style={{ color: 'var(--text-muted)', lineHeight: 1.6, margin: '8px 0 16px' }}>{report.customer.summary}</p>
+                    {report.customer.findings.map((item, index) => <p key={index} style={{ color: 'var(--text-muted)', marginBottom: 8 }}>• {findingText(item)}</p>)}
+                  </div>
+                )}
+
+                {activeTab === 'strategy' && (
+                  <div>
+                    <h2>Business Strategy</h2>
+                    <p style={{ color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 8 }}>{report.strategy.executive_summary}</p>
+                    <h3 style={{ fontSize: 14, margin: '18px 0 8px' }}>Go-to-market implications</h3>
+                    {report.strategy.go_to_market.map((item, index) => <p key={index} style={{ color: 'var(--text-muted)', marginBottom: 8 }}>• {findingText(item)}</p>)}
+                  </div>
+                )}
+
+                {activeTab === 'finance' && (
+                  <div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}><BarChart3 size={18} /><h2>Deterministic Finance</h2></div>
+                    <p style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>{report.finance.executive_summary}</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 18 }}>
+                      {[report.finance.base_scenario, report.finance.upside_scenario, report.finance.downside_scenario].map((scenario) => (
+                        <div className="metric-box" key={scenario.scenario}>
+                          <div className="metric-label">{scenario.scenario}</div>
+                          <div style={{ marginTop: 8 }}>Revenue: <strong>{metricValue(scenario, 'REVENUE')}</strong></div>
+                          <div style={{ marginTop: 6 }}>Operating result: <strong>{metricValue(scenario, 'OPERATING_RESULT')}</strong></div>
+                          <div style={{ marginTop: 6 }}>Break-even: <strong>{metricValue(scenario, 'BREAK_EVEN_UNITS')}</strong></div>
+                        </div>
+                      ))}
+                    </div>
+                    {!!report.finance.limitations.length && <div style={{ marginTop: 18, color: 'var(--text-dim)' }}>Limitations: {report.finance.limitations.join(' • ')}</div>}
+                  </div>
+                )}
+
+                {activeTab === 'analytics' && (
+                  <div>
+                    <h2>Decision Analytics</h2>
+                    {report.chart_data.sensitivity_ranking.length ? report.chart_data.sensitivity_ranking.map((item, index) => (
+                      <div key={index} style={{ padding: 12, borderBottom: '1px solid var(--border)' }}>
+                        <strong>#{item.rank ?? index + 1} {humanize(String(item.input_name || 'input'))}</strong>
+                        <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>Max modeled impact: {item.max_abs_ranking_metric_change_percent ?? 'Unavailable'}%</div>
+                      </div>
+                    )) : <p style={{ color: 'var(--text-dim)' }}>No authoritative sensitivity ranking is available.</p>}
+                  </div>
+                )}
+
+                {activeTab === 'risk' && (
+                  <div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><ShieldCheck size={18} /><h2>Risk Analysis</h2></div>
+                    <p style={{ color: 'var(--text-muted)', margin: '8px 0 16px' }}>{report.risk.executive_summary}</p>
+                    {report.risk.risks.map((risk, index) => (
+                      <div key={index} style={{ padding: 12, border: '1px solid var(--border)', borderRadius: 10, marginBottom: 8 }}>
+                        <strong>{risk.title || `Risk ${index + 1}`}</strong>
+                        <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 4 }}>{risk.category} • likelihood {risk.likelihood} • impact {risk.impact} • level {risk.risk_level}</div>
+                        {risk.statement && <p style={{ color: 'var(--text-muted)', marginTop: 6 }}>{risk.statement}</p>}
+                        {!!risk.mitigation_actions?.length && <p style={{ color: 'var(--text-muted)', marginTop: 6 }}>Mitigation: {risk.mitigation_actions.join('; ')}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {activeTab === 'validation' && (
+                  <div>
+                    <h2>Independent Validation</h2>
+                    <p style={{ marginTop: 8 }}>Status: <strong>{report.validation.status}</strong></p>
+                    <p style={{ color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 10 }}>{report.validation.executive_assessment}</p>
+                    {report.validation.issues.map((issue, index) => <p key={index} style={{ color: 'var(--text-muted)', marginTop: 8 }}>• {findingText(issue)}</p>)}
+                    {!!report.validation.limitations.length && <p style={{ color: 'var(--text-dim)', marginTop: 14 }}>Limitations: {report.validation.limitations.join(' • ')}</p>}
+                  </div>
+                )}
+
+                {activeTab === 'sources' && (
+                  <div>
+                    <h2>Evidence Sources</h2>
+                    {report.sources.length ? report.sources.map((source) => (
+                      <div key={source.source_id} style={{ padding: 12, borderBottom: '1px solid var(--border)' }}>
+                        <strong>{source.title}</strong>
+                        <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 4 }}>{source.provenance} • {humanize(source.stage)}</div>
+                        {source.url && <a href={source.url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', gap: 4, alignItems: 'center', marginTop: 6, color: 'var(--primary-light)' }}>Open source <ExternalLink size={12} /></a>}
+                      </div>
+                    )) : <p style={{ color: 'var(--text-dim)' }}>No persisted web sources are available for this report.</p>}
+                  </div>
+                )}
+              </div>
+
+              <div className="card" style={{ marginTop: 12 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  <button className="btn btn-secondary" onClick={() => void runReportAction({ action: 'CHALLENGE_CONCLUSION' })}>Challenge Conclusion</button>
+                  <button className="btn btn-secondary" onClick={() => void runReportAction({ action: 'WHAT_COULD_CHANGE' })}>What Could Change?</button>
+                  <button className="btn btn-secondary" onClick={() => void runReportAction({ action: 'EXPLAIN_CALCULATION', target_metric: 'break_even' })}>Explain Break-Even</button>
+                  <button className="btn btn-secondary" onClick={() => void runReportAction({ action: 'SHOW_SOURCES' })}><FileText size={14} /> Sources</button>
+                </div>
+                {actionOutput && <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', color: 'var(--text-muted)', marginTop: 14, lineHeight: 1.55 }}>{actionOutput}</pre>}
+              </div>
+            </section>
+          )}
+        </main>
+
+        <aside style={{ position: 'sticky', top: 88 }}>
+          {!analysisActive && !report && (
+            <section className="card">
+              <h2 style={{ fontSize: 17 }}>Idea Profile</h2>
+              <div style={{ marginTop: 8, fontSize: 13, color: readyForAnalysis ? 'var(--success)' : 'var(--warning)' }}>
+                {readyForAnalysis ? 'READY FOR ANALYSIS' : humanize(profile?.readiness || 'NOT_READY')}
+              </div>
+              <div style={{ marginTop: 16, display: 'grid', gap: 10 }}>
+                {profileEntries.length ? profileEntries.map(([key, value]) => (
+                  <div key={key} style={{ paddingBottom: 9, borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase' }}>{humanize(key)}</div>
+                    <div style={{ fontSize: 13, marginTop: 3 }}>{displayValue(value)}</div>
+                  </div>
+                )) : <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>The profile is still empty. Continue the conversation.</p>}
+              </div>
+              {!!profile?.unknown_fields.length && <p style={{ marginTop: 14, color: 'var(--text-dim)', fontSize: 12 }}>Still unknown: {profile.unknown_fields.map(humanize).join(', ')}</p>}
+              <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: 18 }} disabled={!readyForAnalysis || starting} onClick={handleStartAnalysis}>
+                {starting ? <span className="spin"><RotateCw size={15} /></span> : <Play size={15} />}
+                Start Analysis
               </button>
-            </div>
-          </div>
-        </div>
-      )}
+              {!readyForAnalysis && <p style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 8 }}>Analysis starts only after the authoritative profile reaches READY_FOR_ANALYSIS.</p>}
+            </section>
+          )}
+
+          {analysisActive && (
+            <section className="card">
+              <h2 style={{ fontSize: 17 }}>Analysis Progress</h2>
+              <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>Live backend stage state — no timer simulation.</p>
+              <div style={{ display: 'grid', gap: 8, marginTop: 16 }}>
+                {STAGES.map(([stage, label]) => {
+                  const status = currentStageStatus(progress, stage);
+                  return (
+                    <div key={stage} style={{ display: 'flex', gap: 9, alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                      {status === 'COMPLETED' ? <CheckCircle2 size={15} color="var(--success)" /> : status === 'RUNNING' ? <span className="spin"><RotateCw size={15} /></span> : status === 'PAUSED_FOR_USER' ? <AlertTriangle size={15} color="var(--warning)" /> : <Clock size={15} color="var(--text-dim)" />}
+                      <div style={{ flex: 1 }}><div style={{ fontSize: 13 }}>{label}</div><div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{status}</div></div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {report && (
+            <section className="card">
+              <h2 style={{ fontSize: 17 }}>Report Ready</h2>
+              <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 8 }}>Version {report.version} • {report.decision.decision} • {report.decision.confidence} confidence</p>
+              <p style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 10 }}>Use the same Chat AI to ask grounded follow-up questions. Explicit report actions are available below the report.</p>
+            </section>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }
