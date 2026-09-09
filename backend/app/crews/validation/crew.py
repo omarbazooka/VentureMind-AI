@@ -67,13 +67,21 @@ class ValidationCrewRunner:
                 "- Check if decision logic ignores sensitivity or downside scenarios.\n"
                 "- Check if critical risks identified in Risk analysis are ignored in Strategy/Finance.\n"
                 "- Check if research evidence gaps are acknowledged as uncertainty rather than certainty.\n"
-                "- For any issue, specify the category, severity (LOW, MEDIUM, HIGH, CRITICAL), "
-                "description, affected stages, and exact evidence IDs if applicable.\n"
+                "- Every ordinary issue MUST cite concrete lineage using one or more of: "
+                "profile_fields, evidence_ids, financial_metrics, decision_kpis, "
+                "sensitivity_inputs, or risk_titles.\n"
+                "- affected_stages describe where the problem exists; stage names alone are NOT evidence.\n"
+                "- The only stage-only exception is MISSING_EVIDENCE for a research stage that the supplied "
+                "Research Evidence Gate itself marks insufficient.\n"
+                "- For any issue, specify category, severity, description, affected stages, concrete lineage, "
+                "and an optional suggestion.\n"
+                "- Do NOT decide retry scheduling, attempt counts, execution order, or state mutation. "
+                "Application code owns those decisions.\n"
                 "- Return ValidationDraft only. Do NOT invent new facts or web citations."
             ),
             expected_output=(
                 "A structured ValidationDraft containing executive_assessment, "
-                "a list of ValidationIssue items, and limitations."
+                "a list of concretely grounded ValidationIssue items, and limitations."
             ),
             agent=validator_agent,
             tools=[],

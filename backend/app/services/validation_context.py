@@ -94,6 +94,11 @@ def build_validation_analysis_context(
             "Validation context cannot load research because Research Join is not ready"
         ) from exc
 
+    if not research_evaluation.gate.can_proceed:
+        raise ValidationContextDependencyError(
+            "Validation context cannot be built before the Research Evidence Gate allows progression"
+        )
+
     strategy_result = _load_completed_stage_result(
         db=db,
         analysis_run_id=analysis_run_id,
@@ -128,29 +133,30 @@ def build_validation_analysis_context(
         risk_analysis = RiskAnalysis.model_validate(
             risk_result.result_data
         )
+
+        return ValidationAnalysisContext(
+            profile_snapshot=snapshot,
+            research_gate=research_evaluation.gate,
+            research_stage_run_ids=research_evaluation.latest_stage_run_ids,
+            market_analysis=research_evaluation.results.get(
+                AnalysisStage.MARKET_RESEARCH
+            ),
+            competitor_analysis=research_evaluation.results.get(
+                AnalysisStage.COMPETITOR_INTELLIGENCE
+            ),
+            customer_analysis=research_evaluation.results.get(
+                AnalysisStage.CUSTOMER_INTELLIGENCE
+            ),
+            business_strategy_stage_run_id=strategy_result.stage_run_id,
+            business_strategy=strategy_analysis,
+            finance_stage_run_id=finance_result.stage_run_id,
+            finance_bundle=finance_bundle,
+            analytics_stage_run_id=analytics_result.stage_run_id,
+            decision_analytics=analytics_analysis,
+            risk_stage_run_id=risk_result.stage_run_id,
+            risk_analysis=risk_analysis,
+        )
     except ValidationError as exc:
         raise ValidationContextDependencyError(
-            "An upstream stage result contains invalid data"
+            "Upstream results are internally inconsistent for Independent Validation"
         ) from exc
-
-    return ValidationAnalysisContext(
-        profile_snapshot=snapshot,
-        research_gate=research_evaluation.gate,
-        market_analysis=research_evaluation.results.get(
-            AnalysisStage.MARKET_RESEARCH
-        ),
-        competitor_analysis=research_evaluation.results.get(
-            AnalysisStage.COMPETITOR_INTELLIGENCE
-        ),
-        customer_analysis=research_evaluation.results.get(
-            AnalysisStage.CUSTOMER_INTELLIGENCE
-        ),
-        business_strategy_stage_run_id=strategy_result.stage_run_id,
-        business_strategy=strategy_analysis,
-        finance_stage_run_id=finance_result.stage_run_id,
-        finance_bundle=finance_bundle,
-        analytics_stage_run_id=analytics_result.stage_run_id,
-        decision_analytics=analytics_analysis,
-        risk_stage_run_id=risk_result.stage_run_id,
-        risk_analysis=risk_analysis,
-    )

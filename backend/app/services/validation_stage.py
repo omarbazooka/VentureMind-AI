@@ -22,7 +22,7 @@ from app.services.validation_context import (
 )
 from app.services.validation_grounding import (
     ValidationGroundingError,
-    validate_grounded_validation_analysis,
+    validate_persisted_validation_analysis,
 )
 
 
@@ -208,6 +208,28 @@ def complete_validation_stage(
     except ValidationError as exc:
         raise ValidationStageResultValidationError(
             "Validation returned an invalid structured result"
+        ) from exc
+
+    try:
+        _load_analysis_run(
+            db=db,
+            analysis_run_id=stage_run.analysis_run_id,
+        )
+        current_context = build_validation_analysis_context(
+            db=db,
+            analysis_run_id=stage_run.analysis_run_id,
+        )
+        validate_persisted_validation_analysis(
+            analysis=validated_result,
+            context=current_context,
+        )
+    except (
+        ValidationStageStateError,
+        ValidationContextDependencyError,
+        ValidationGroundingError,
+    ) as exc:
+        raise ValidationStageDependencyError(
+            "Validation upstream context changed or result lost grounding before persistence"
         ) from exc
 
     analysis_result = AnalysisResult(

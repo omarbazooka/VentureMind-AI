@@ -32,16 +32,16 @@ class DecisionCrewRunner:
             goal=(
                 "Synthesize the validated venture findings across Market, Competitors, "
                 "Customers, Strategy, Finance, Analytics, Risk, and Independent "
-                "Validation into an authoritative, grounded investment recommendation "
+                "Validation into a grounded investment recommendation "
                 "(GO, CONDITIONAL_GO, NO_GO, or INSUFFICIENT_EVIDENCE) with explicit "
                 "rationale, limitations, and key conditions."
             ),
             backstory=(
                 "You are an experienced venture capitalist chairing an investment "
-                "committee. You base your decisions solely on the supplied evidence "
-                "and rigorous analysis. You do not fabricate data, promise guaranteed "
-                "success, or exceed the confidence supported by the evidence. You "
-                "perform NO web research and use NO external tools."
+                "committee. You base decisions solely on the supplied validated packet. "
+                "You do not fabricate data, promise guaranteed success, or exceed the "
+                "confidence supported by evidence. You perform NO web research and use "
+                "NO external tools."
             ),
             llm=self._llm,
             allow_delegation=False,
@@ -65,19 +65,27 @@ class DecisionCrewRunner:
                 "- Risk Analysis: {risk_analysis}\n"
                 "- Independent Validation: {validation_analysis}\n\n"
                 "RULES:\n"
-                "- Decision must be one of: GO, CONDITIONAL_GO, NO_GO, INSUFFICIENT_EVIDENCE.\n"
-                "- Confidence must be one of: HIGH, MEDIUM, LOW.\n"
-                "- If Research Evidence Gate or Independent Validation notes insufficient "
-                "evidence, do NOT claim HIGH confidence.\n"
-                "- Detail the strongest positive and negative signals.\n"
-                "- Provide clear rationale and what assumptions could change the decision.\n"
-                "- List recommended next validation steps."
+                "- Decision must be one of GO, CONDITIONAL_GO, NO_GO, INSUFFICIENT_EVIDENCE.\n"
+                "- Confidence must be HIGH, MEDIUM, or LOW, but deterministic application guardrails may cap it.\n"
+                "- Use NO new web research or external tools.\n"
+                "- supporting_evidence_lineage MUST contain concrete structured references, not free-form stage names.\n"
+                "- Allowed lineage kinds are PROFILE_FIELD, EVIDENCE_SOURCE, FINANCIAL_METRIC, DECISION_KPI, "
+                "SENSITIVITY_INPUT, RISK, and VALIDATION_ISSUE.\n"
+                "- For EVIDENCE_SOURCE include the exact supplied source_id and its research stage.\n"
+                "- For FINANCIAL_METRIC use the exact metric enum value and stage FINANCE.\n"
+                "- For DECISION_KPI or SENSITIVITY_INPUT use exact supplied values and stage DECISION_ANALYTICS.\n"
+                "- For RISK use an exact supplied risk title and stage RISK.\n"
+                "- For VALIDATION_ISSUE use an exact supplied validation issue category and stage INDEPENDENT_VALIDATION.\n"
+                "- PROFILE_FIELD uses an exact key from the frozen profile and no stage.\n"
+                "- Never use a stage name by itself as evidence lineage.\n"
+                "- Detail strongest positive and negative signals, assumptions, limitations, what could change, "
+                "and recommended next validation steps."
             ),
             expected_output=(
                 "A structured FinalDecisionDraft containing decision, confidence, "
-                "rationale, supporting_evidence_lineage, strongest_positive_signals, "
-                "strongest_negative_signals, critical_assumptions, limitations, "
-                "what_could_change, and recommended_next_steps."
+                "rationale, concrete supporting_evidence_lineage references, "
+                "strongest_positive_signals, strongest_negative_signals, critical_assumptions, "
+                "limitations, what_could_change, and recommended_next_steps."
             ),
             agent=committee_agent,
             tools=[],

@@ -95,6 +95,11 @@ def build_investment_committee_context(
             "Decision context cannot load research because Research Join is not ready"
         ) from exc
 
+    if not research_evaluation.gate.can_proceed:
+        raise DecisionContextDependencyError(
+            "Decision context cannot be built before the Research Evidence Gate allows progression"
+        )
+
     strategy_result = _load_completed_stage_result(
         db=db,
         analysis_run_id=analysis_run_id,
@@ -137,31 +142,32 @@ def build_investment_committee_context(
         validation_analysis = ValidationAnalysis.model_validate(
             validation_result.result_data
         )
+
+        return InvestmentCommitteeContext(
+            profile_snapshot=snapshot,
+            research_gate=research_evaluation.gate,
+            research_stage_run_ids=research_evaluation.latest_stage_run_ids,
+            market_analysis=research_evaluation.results.get(
+                AnalysisStage.MARKET_RESEARCH
+            ),
+            competitor_analysis=research_evaluation.results.get(
+                AnalysisStage.COMPETITOR_INTELLIGENCE
+            ),
+            customer_analysis=research_evaluation.results.get(
+                AnalysisStage.CUSTOMER_INTELLIGENCE
+            ),
+            business_strategy_stage_run_id=strategy_result.stage_run_id,
+            business_strategy=strategy_analysis,
+            finance_stage_run_id=finance_result.stage_run_id,
+            finance_bundle=finance_bundle,
+            analytics_stage_run_id=analytics_result.stage_run_id,
+            decision_analytics=analytics_analysis,
+            risk_stage_run_id=risk_result.stage_run_id,
+            risk_analysis=risk_analysis,
+            validation_stage_run_id=validation_result.stage_run_id,
+            validation_analysis=validation_analysis,
+        )
     except ValidationError as exc:
         raise DecisionContextDependencyError(
-            "An upstream stage result contains invalid data"
+            "Upstream results are internally inconsistent for Investment Committee"
         ) from exc
-
-    return InvestmentCommitteeContext(
-        profile_snapshot=snapshot,
-        research_gate=research_evaluation.gate,
-        market_analysis=research_evaluation.results.get(
-            AnalysisStage.MARKET_RESEARCH
-        ),
-        competitor_analysis=research_evaluation.results.get(
-            AnalysisStage.COMPETITOR_INTELLIGENCE
-        ),
-        customer_analysis=research_evaluation.results.get(
-            AnalysisStage.CUSTOMER_INTELLIGENCE
-        ),
-        business_strategy_stage_run_id=strategy_result.stage_run_id,
-        business_strategy=strategy_analysis,
-        finance_stage_run_id=finance_result.stage_run_id,
-        finance_bundle=finance_bundle,
-        analytics_stage_run_id=analytics_result.stage_run_id,
-        decision_analytics=analytics_analysis,
-        risk_stage_run_id=risk_result.stage_run_id,
-        risk_analysis=risk_analysis,
-        validation_stage_run_id=validation_result.stage_run_id,
-        validation_analysis=validation_analysis,
-    )
