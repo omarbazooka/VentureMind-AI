@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
@@ -55,7 +56,6 @@ class AnalysisProfileSnapshot(BaseModel):
         default_factory=list,
     )
 
-
 class AnalysisRunCreateResponse(BaseModel):
     run_id: UUID
     idea_id: UUID
@@ -63,3 +63,57 @@ class AnalysisRunCreateResponse(BaseModel):
     profile_version: int = Field(ge=1)
     status: AnalysisRunStatus
     created_at: datetime
+
+
+class StageProgressItem(BaseModel):
+    stage: str
+    attempt: int
+    status: str
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class PendingInputSummary(BaseModel):
+    input_id: UUID
+    stage_run_id: UUID
+    input_name: str
+    question: str
+    options: list[dict[str, Any]] = Field(default_factory=list)
+    allow_custom: bool = True
+    currency: str | None = None
+    unit_label: str | None = None
+    period: str | None = None
+
+
+class AnalysisProgressResponse(BaseModel):
+    idea_id: UUID
+    analysis_run_id: UUID | None = None
+    run_status: str
+    current_stage: str | None = None
+    completed_stages: list[str] = Field(default_factory=list)
+    stage_runs: list[StageProgressItem] = Field(default_factory=list)
+    pending_input: PendingInputSummary | None = None
+    has_report: bool = False
+    report_version: int | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class AnswerInputRequest(BaseModel):
+    value: Decimal | None = None
+    choice: str | None = None
+    text: str | None = None
+    currency: str | None = None
+    unit_label: str | None = None
+    period: str | None = None
+    source_message_id: UUID | None = None
+
+
+class AnswerInputResponse(BaseModel):
+    input_id: UUID
+    status: str
+    analysis_run_status: str
+    message: str
+
