@@ -117,8 +117,8 @@ def _mock_report(idea_id):
             "break_even_comparison": [
                 {
                     "scenario": "BASE",
-                    "break_even_units": 22.2,
-                    "break_even_revenue": 4444.0,
+                    "break_even_units": "22.2",
+                    "break_even_revenue": "4444.0",
                     "currency": "USD",
                 }
             ],
@@ -137,45 +137,13 @@ def _mock_report(idea_id):
     )
 
 
-def test_orchestrator_handles_ask_report_question():
-    orchestrator = TurnOrchestrator()
-    context = _mock_context()
-    db = MagicMock(spec=Session)
-    report = _mock_report(context.idea_id)
-    db.scalar.return_value = report
-
-    turn = TurnUnderstanding(
+def _turn(intent: Intent, *, payload=None):
+    return TurnUnderstanding(
         sub_requests=[
             SubRequest(
                 id="req-1",
-                intent=Intent.ASK_REPORT_QUESTION,
-                confidence=0.9,
-            )
-        ],
-        execution_mode=ExecutionMode.SINGLE,
-        overall_confidence=0.95,
-        clarification_needed=False,
-    )
-
-    result = orchestrator.execute(turn=turn, context=context, db=db)
-
-    assert "CONDITIONAL_GO" in result.response_text
-    assert "VentureMind Report Analysis" in result.response_text
-
-
-def test_orchestrator_handles_explain_calculation():
-    orchestrator = TurnOrchestrator()
-    context = _mock_context()
-    db = MagicMock(spec=Session)
-    report = _mock_report(context.idea_id)
-    db.scalar.return_value = report
-
-    turn = TurnUnderstanding(
-        sub_requests=[
-            SubRequest(
-                id="req-2",
-                intent=Intent.EXPLAIN_CALCULATION,
-                payload={"target_metric": "break_even"},
+                intent=intent,
+                payload=payload or {},
                 confidence=0.95,
             )
         ],
@@ -184,53 +152,63 @@ def test_orchestrator_handles_explain_calculation():
         clarification_needed=False,
     )
 
-    result = orchestrator.execute(turn=turn, context=context, db=db)
 
-    assert "Break-Even Calculation Breakdown" in result.response_text
-    assert "22.2 units" in result.response_text
-
-
-def test_orchestrator_handles_challenge_conclusion():
+def test_orchestrator_handles_ask_report_question_without_inventing_facts():
     orchestrator = TurnOrchestrator()
     context = _mock_context()
     db = MagicMock(spec=Session)
-    report = _mock_report(context.idea_id)
-    db.scalar.return_value = report
+    db.scalar.return_value = _mock_report(context.idea_id)
 
-    turn = TurnUnderstanding(
-        sub_requests=[
-            SubRequest(
-                id="req-3",
-                intent=Intent.CHALLENGE_CONCLUSION,
-                confidence=0.9,
-            )
-        ],
-        execution_mode=ExecutionMode.SINGLE,
-        overall_confidence=0.95,
-        clarification_needed=False,
+    result = orchestrator.execute(
+        turn=_turn(Intent.ASK_REPORT_QUESTION), context=context, db=db
     )
 
-    result = orchestrator.execute(turn=turn, context=context, db=db)
-
-    assert "Critical Stress-Test & Conclusion Challenges" in result.response_text
+    assert "CONDITIONAL_GO" in result.response_text
+    assert "Grounded Report Summary" in result.response_text
     assert "Enterprise sales ramp" in result.response_text
+    assert "Positive gross margin potential" not in result.response_text
+
+
+def test_orchestrator_handles_explain_calculation_from_persisted_values():
+    orchestrator = TurnOrchestrator()
+    context = _mock_context()
+    db = MagicMock(spec=Session)
+    db.scalar.return_value = _mock_report(context.idea_id)
+
+    result = orchestrator.execute(
+        turn=_turn(
+            Intent.EXPLAIN_CALCULATION,
+            payload={"target_metric": "break_even"},
+        ),
+        context=context,
+        db=db,
+    )
+
+    assert "Break-Even Calculation" in result.response_text
+    assert "22.2" in result.response_text
+    assert "Selling price per unit: 200.0 USD" in result.response_text
+
+
+def test_orchestrator_challenge_uses_only_recorded_decision_fields():
+    orchestrator = TurnOrchestrator()
+    context = _mock_context()
+    db = MagicMock(spec=Session)
+    db.scalar.return_value = _mock_report(context.idea_id)
+
+    result = orchestrator.execute(
+        turn=_turn(Intent.CHALLENGE_CONCLUSION), context=context, db=db
+    )
+
+    assert "Challenge the Current Conclusion" in result.response_text
+    assert "Enterprise sales ramp" in result.response_text
+    assert "Fixed overhead remains controlled" not in result.response_text
 
 
 def test_orchestrator_fails_without_db_session():
     orchestrator = TurnOrchestrator()
     context = _mock_context()
-    turn = TurnUnderstanding(
-        sub_requests=[
-            SubRequest(
-                id="req-4",
-                intent=Intent.ASK_REPORT_QUESTION,
-                confidence=0.9,
-            )
-        ],
-        execution_mode=ExecutionMode.SINGLE,
-        overall_confidence=0.95,
-        clarification_needed=False,
-    )
 
     with pytest.raises(MissingDatabaseSessionError):
-        orchestrator.execute(turn=turn, context=context, db=None)
+        orchestrator.execute(
+            turn=_turn(Intent.ASK_REPORT_QUESTION), context=context, db=None
+        )
