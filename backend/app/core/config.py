@@ -1,4 +1,5 @@
-from pydantic import SecretStr
+from typing import Any
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +28,26 @@ class Settings(BaseSettings):
     business_strategy_model: str = "gemini-3.5-flash-lite"
     finance_assumption_model: str = "gemini-3.5-flash-lite"
     risk_analysis_model: str = "gemini-3.5-flash-lite"
+
+    # Fallback models used if requests/quota run out for primary models
+    llm_fallback_models: list[str] | str = [
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash-lite",
+    ]
+
+    @field_validator("llm_fallback_models", mode="after")
+    @classmethod
+    def _parse_llm_fallback_models(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            v_strip = v.strip()
+            if v_strip.startswith("[") and v_strip.endswith("]"):
+                import json
+                try:
+                    return json.loads(v_strip)
+                except Exception:
+                    pass
+            return [m.strip() for m in v_strip.split(",") if m.strip()]
+        return list(v)
 
     model_config = SettingsConfigDict(
         env_file=".env",
