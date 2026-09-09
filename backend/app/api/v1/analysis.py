@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import (
@@ -7,12 +7,15 @@ from fastapi import (
     HTTPException,
     status,
 )
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.models.report import Report
 from app.schemas.analysis import (
     AnalysisRunCreateResponse,
 )
+from app.schemas.report import StructuredReport
 from app.services.analysis_run import (
     AnalysisIdeaNotFoundError,
     AnalysisProfileNotFoundError,
@@ -101,3 +104,73 @@ def start_analysis(
         status=analysis_run.status,
         created_at=analysis_run.created_at,
     )
+
+
+@router.get(
+    "/{idea_id}/report/latest",
+    response_model=StructuredReport,
+)
+def get_latest_report(
+    idea_id: UUID,
+    db: DbSession,
+) -> StructuredReport:
+    report = db.scalar(
+        select(Report)
+        .where(Report.idea_id == idea_id)
+        .order_by(desc(Report.version))
+        .limit(1)
+    )
+    if report is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found for this idea",
+        )
+    return StructuredReport.model_validate(report.report_data)
+
+
+@router.get(
+    "/{idea_id}/reports",
+)
+def list_reports(
+    idea_id: UUID,
+    db: DbSession,
+) -> list[dict[str, Any]]:
+    reports = db.scalars(
+        select(Report)
+        .where(Report.idea_id == idea_id)
+        .order_by(desc(Report.version))
+    ).all()
+    return [
+        {
+            "id": str(r.id),
+            "idea_id": str(r.idea_id),
+            "analysis_run_id": str(r.analysis_run_id),
+            "version": r.version,
+            "created_at": r.created_at,
+        }
+        for r in reports
+    ]
+
+
+@router.get(
+    "/{idea_id}/reports/{version}",
+    response_model=StructuredReport,
+)
+def get_report_version(
+    idea_id: UUID,
+    version: int,
+    db: DbSession,
+) -> StructuredReport:
+    report = db.scalar(
+        select(Report).where(
+            Report.idea_id == idea_id,
+            Report.version == version,
+        )
+    )
+    if report is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Report version {version} not found for this idea",
+        )
+    return StructuredReport.model_validate(report.report_data)
+
