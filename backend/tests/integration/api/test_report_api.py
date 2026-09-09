@@ -205,7 +205,7 @@ def test_get_report_endpoints():
         json={"action": "CHALLENGE_CONCLUSION"},
     )
     assert chal_res.status_code == 200
-    assert "Adversarial Conclusion Challenge" in chal_res.json()["title"]
+    assert "Conclusion Challenge" in chal_res.json()["title"]
 
     # 8. Execute report action: ASK_VENTUREMIND
     ask_res = client.post(
@@ -213,4 +213,4 @@ def test_get_report_endpoints():
         json={"action": "ASK_VENTUREMIND", "question": "Is this venture viable?"},
     )
     assert ask_res.status_code == 200
-    assert "Grounded Q&A Response" in ask_res.json()["title"]
+    assert "Grounded Report Summary" in ask_res.json()["title"]

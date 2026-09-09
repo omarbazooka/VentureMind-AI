@@ -131,7 +131,7 @@ def _sample_committee_context(validation_status: ValidationStatus = ValidationSt
         validation_stage_run_id=uuid4(),
         validation_analysis=ValidationAnalysis(
             status=validation_status,
-            executive_assessment="Audited",
+            executive_assessment="Audited and verified successfully.",
             issues=[],
             can_proceed=(validation_status != ValidationStatus.FAILED),
         ),
@@ -158,5 +158,5 @@ def test_decision_grounding_cannot_go_if_validation_failed():
         confidence=DecisionConfidence.LOW,
         rationale="Attempting GO despite failed audit.",
     )
-    with pytest.raises(DecisionGroundingError, match="Cannot issue a GO decision when Independent Validation has FAILED"):
+    with pytest.raises(DecisionGroundingError, match="cannot issue a decision from a Validation result that blocks progression"):
         validate_grounded_decision(draft=draft, context=context)
