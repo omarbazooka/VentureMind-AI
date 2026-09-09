@@ -8,6 +8,11 @@ from sqlalchemy.orm import Session
 from app.chat.context import build_working_context
 from app.chat.controller import ChatController
 from app.chat.orchestrator import TurnOrchestratorError
+from app.core.auth import (
+    AuthenticatedUser,
+    enforce_idea_ownership,
+    get_optional_user,
+)
 from app.core.database import get_db
 from app.llm.gateway import LLMGatewayError
 from app.models.chat_session import ChatSession
@@ -26,6 +31,10 @@ router = APIRouter(
 )
 
 DbSession = Annotated[Session, Depends(get_db)]
+OptionalUser = Annotated[
+    AuthenticatedUser | None,
+    Depends(get_optional_user),
+]
 
 
 def get_chat_controller() -> ChatController:
@@ -48,6 +57,7 @@ def create_message(
     payload: ChatMessageCreate,
     db: DbSession,
     controller: ChatControllerDep,
+    user: OptionalUser = None,
 ) -> ChatTurnResponse:
     idea = db.get(
         Idea,
@@ -59,6 +69,11 @@ def create_message(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Idea not found",
         )
+
+    enforce_idea_ownership(
+        owner_user_id=idea.owner_user_id,
+        user=user,
+    )
 
     session_statement = (
         select(ChatSession)
@@ -167,6 +182,7 @@ def create_message(
 def get_messages(
     idea_id: UUID,
     db: DbSession,
+    user: OptionalUser = None,
 ) -> list[ChatMessageResponse]:
     idea = db.get(
         Idea,
@@ -178,6 +194,11 @@ def get_messages(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Idea not found",
         )
+
+    enforce_idea_ownership(
+        owner_user_id=idea.owner_user_id,
+        user=user,
+    )
 
     session_statement = (
         select(ChatSession)
