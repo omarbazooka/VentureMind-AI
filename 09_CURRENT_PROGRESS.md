@@ -2,7 +2,7 @@
 
 _Last updated: 2026-09-09_
 
-This file is the current implementation checkpoint. Older milestone notes should not override this section.
+This file is the authoritative implementation checkpoint. Older milestone notes must not override this file.
 
 ## Build Status
 
@@ -13,166 +13,104 @@ This file is the current implementation checkpoint. Older milestone notes should
 - **Day 5 — AnalysisRun + Research Foundation:** DONE
 - **Day 6 — Files / RAG:** DEFERRED POST-MVP (ADR-028)
 - **Day 7 — Business Strategy + Finance:** COMPLETED & VALIDATED
-- **Day 8 — Decision Analytics + Risk:** IMPLEMENTATION COMPLETE; FINAL VALIDATION PENDING
-- **Day 9 — Validation + Final Decision:** PENDING
+- **Day 8 — Decision Analytics + Risk:** COMPLETED & VALIDATED
+- **Day 9 — Validation + Final Decision:** NEXT
 - **Day 10 — Structured Report + Visualization:** PENDING
 - **Day 11 — Unified Grounded Chat Q&A:** PENDING
 - **Day 12 — Changes + Targeted Re-analysis + Compound Turns:** PENDING
 - **Day 13 — E2E Hardening:** PENDING
 
-## Day 7 — Business Strategy
+---
+
+## Day 7 — Business Strategy + Finance
 
 **Status: COMPLETED & VALIDATED**
 
-Completed:
+### Business Strategy
 - Research Join / Evidence Gate → Business Strategy scheduling.
 - `StrategyStageClaim` and authoritative context loading.
-- Business Strategy runner and deterministic grounding.
+- Business Strategy CrewAI runner and deterministic grounding.
 - Strategy claim / complete / fail lifecycle.
 - Strategy executor.
 - Research → Strategy integration coverage.
-- Completed Strategy + persisted `AnalysisResult` verification before Finance scheduling.
+- Completed Strategy + persisted `AnalysisResult` required before Finance scheduling.
 - Idempotent Business Strategy → Finance scheduling through `BusinessAnalysisFlow.advance_strategy()`.
 
-## Day 7 — Finance
-
-**Status: COMPLETED & VALIDATED**
-
-### Completed Finance primitives
-- Structured Finance contracts and explicit provenance.
+### Finance
+- Structured Finance contracts with explicit provenance.
 - Deterministic readiness evaluation.
-- Deterministic authoritative financial calculator.
-- Monthly / annual period normalization.
+- Authoritative deterministic financial calculator.
+- Monthly / annual normalization.
 - BASE / UPSIDE / DOWNSIDE deterministic scenario engine.
-- Bounded Finance AI Assumption Builder through `LLMGateway`; no CrewAI workflow was added because the task is a single bounded structured generation.
-- Deterministic Finance grounding for USER / WEB / AI_ASSUMPTION source boundaries.
+- Bounded Finance AI Assumption Builder through `LLMGateway`.
+- Deterministic Finance grounding for USER / WEB / AI_ASSUMPTION provenance.
+- `FinanceStageClaim` and authoritative context loading from frozen IdeaProfile + accepted Research + completed Strategy.
+- Durable `AnalysisRunInput` support for analysis-time questions/answers.
+- `PAUSED_FOR_USER` at AnalysisRun and Finance stage level.
+- Choice-aware Finance questions with backend-grounded options plus custom / Other.
+- Selected option values resolve from the persisted backend request; client values cannot override them.
+- Answered Finance input resumes the AnalysisRun and returns Finance to `PENDING` for explicit re-claim.
+- Competitor prices remain market modeling choices, never venture WTP truth.
+- USER lineage can come from frozen IdeaProfile fields or answered `AnalysisRunInput` IDs.
+- Analysis-time answers never mutate the frozen `AnalysisRun.profile_snapshot`.
+- Finance executor coordinates claim → assumptions → grounding → answered inputs → readiness → pause when needed → deterministic scenarios → persistence.
 
-### Completed Finance stage/runtime lifecycle
-- `FinanceStageClaim` and authoritative context loading from frozen IdeaProfile snapshot, accepted Research Join state, and completed Business Strategy.
-- Durable `AnalysisRunInput` persistence for analysis-time user questions and answers.
-- `PAUSED_FOR_USER` support at both AnalysisRun and AnalysisStage level.
-- Finance pause lifecycle with one active pending question at a time.
-- Typed `FinanceInputRequest` and `FinanceUserInputAnswer` contracts.
-- Choice-aware questions with backend-grounded options plus an always-available custom / Other path.
-- Selected option answers resolve their numeric value from the persisted backend request; clients cannot override the selected option value.
-- Custom answers are validated against requested currency / unit / period when those are already fixed.
-- Answered Finance input resumes the parent AnalysisRun and returns the Finance stage to `PENDING`, so a worker must explicitly re-claim it before execution continues.
-- Finance complete / fail lifecycle and persisted `AnalysisResult` support.
-
-### Market-backed Finance options
-Initial deterministic option generation is intentionally conservative:
-- currently supports `SELLING_PRICE_PER_UNIT` only;
-- uses accepted Competitor Intelligence only;
-- ignores competitor evidence if that stage is marked insufficient;
-- uses WEB evidence only;
-- requires observed numerical pricing evidence;
-- requires the evidence statement to match the Finance currency and unit basis;
-- can expose lower observed benchmark, deterministic midpoint, and upper observed benchmark;
-- competitor prices remain modeling choices, not venture selling-price facts;
-- the user always retains a custom / Other option.
-
-Other missing Finance inputs currently fall back to a direct user question unless a future deterministic evidence rule is explicitly implemented for them.
-
-### Run-scoped USER provenance
-`FinancialAssumption` supports USER lineage from either:
-- frozen `IdeaProfile` fields; or
-- answered `AnalysisRunInput` IDs.
-
-Analysis-time answers do not mutate or masquerade as fields from the frozen IdeaProfile snapshot.
-
-Answered run inputs are overlaid deterministically after AI draft grounding. A user-confirmed critical input is applied consistently to BASE, UPSIDE, and DOWNSIDE instead of allowing the model to invent scenario variations around that confirmed fact.
-
-### Finance Executor
-`execute_finance_stage()` coordinates:
-1. claim Finance stage;
-2. run bounded Finance assumption generation;
-3. deterministic grounding;
-4. load and ground answered analysis-time user inputs;
-5. deterministic readiness evaluation;
-6. if BASE has a decision-critical missing input, build a direct or market-option request and pause for the user;
-7. if only secondary scenarios are incomplete, fail the modeling output rather than asking the user to fix an AI scenario-construction problem;
-8. calculate BASE / UPSIDE / DOWNSIDE deterministically when ready;
-9. persist the validated Finance `AnalysisResult` and complete the stage.
-
-## Day 7 — Validated integration coverage
-
-### Strategy → Finance scheduling
-`BusinessAnalysisFlow.advance_strategy()`:
-- requires AnalysisRun = RUNNING;
-- requires a completed Business Strategy stage;
-- requires its persisted Business Strategy `AnalysisResult`;
-- reuses an existing initial Finance stage if present;
-- otherwise creates `FINANCE`, attempt 1, `PENDING`.
-
-A helper-scope/indentation bug found by the focused unit tests was fixed by moving `_require_completed_strategy_result()` and `_ensure_finance_stage_run()` inside `BusinessAnalysisFlow`.
-
-### Real-DB Strategy → Finance integration
-`tests/integration/analysis/test_strategy_to_finance.py` provides real PostgreSQL transaction-backed lifecycle coverage while faking only the LLM-facing Finance assumption runner.
-
-It validates:
-1. completed Strategy → Finance scheduling → claim → grounded assumptions → deterministic calculation → persisted Finance result → FINANCE COMPLETED;
-2. missing selling price → Finance/AnalysisRun `PAUSED_FOR_USER` → `AnalysisRunInput(PENDING)` → custom user answer → `ANSWERED` → Finance `PENDING` + AnalysisRun `RUNNING` → re-claim → run-input USER overlay → deterministic calculation → FINANCE COMPLETED.
-
-## Day 7 final validation
-
-**Final backend regression: 370 passed, 0 failed, 0 errors.**
-
-The full regression includes the focused Strategy → Finance scheduling coverage, real-DB Strategy → Finance integration, Finance pause/answer/re-claim behavior, and the existing backend unit/integration suite.
-
-Day 7 exit criteria are satisfied.
+### Day 7 validation
+- Real PostgreSQL Strategy → Finance integration covers ready completion and pause/answer/re-claim.
+- Final Day 7 backend regression previously validated at **370 passed, 0 failed, 0 errors**.
 
 ---
 
 ## Day 8 — Decision Analytics
 
-**Status: IMPLEMENTATION COMPLETE; FINAL VALIDATION PENDING**
+**Status: COMPLETED & VALIDATED**
 
-Completed implementation:
+### Contracts and deterministic analytics
 - Added `DECISION_ANALYTICS` as an explicit `AnalysisStage`.
-- Added strict `DecisionAnalyticsResult` contracts for:
+- Added `DecisionAnalyticsResult` contracts for:
   - decision KPIs;
   - scenario-relative changes;
   - deterministic sensitivity results;
-  - Finance stage lineage;
+  - exact Finance stage lineage;
   - explicit limitations.
-- Reused Finance enums and authoritative calculated outputs instead of duplicating Finance truth.
+- Reused authoritative Finance enums and outputs rather than duplicating Finance truth.
 - Added deterministic KPI derivation for:
   - operating margin percent;
   - break-even headroom percent.
 - Added deterministic BASE / UPSIDE / DOWNSIDE relative comparisons.
-- Relative-change math uses absolute BASE magnitude so movement around negative baselines remains directionally meaningful.
-- Zero BASE denominators produce an unavailable relative percentage plus an explicit limitation rather than fabricated math.
-- Added BASE-centered one-at-a-time sensitivity analysis for:
+- Relative-change math uses absolute BASE magnitude so negative baselines remain directionally meaningful.
+- Zero denominators produce unavailable percentages plus explicit limitations rather than fabricated math.
+- Added BASE-centered one-at-a-time sensitivity for:
   - selling price per unit;
   - sales volume;
   - variable cost per unit;
   - fixed costs.
-- Sensitivity reuses the authoritative Finance calculator after controlled `±shock%` input perturbation.
-- Sensitivity currently evaluates impacts on available:
-  - revenue;
-  - operating result;
-  - break-even units;
-  - contribution margin percent.
-- Inputs are ranked by deterministic operating-result sensitivity when the ranking percentage is defined.
+- Sensitivity reuses the authoritative Finance calculator after controlled `±shock%` perturbation.
+- Sensitivity evaluates available impact on revenue, operating result, break-even units, and contribution margin percent.
+- Inputs are ranked deterministically by operating-result sensitivity when defined.
 - Added deterministic Analytics result assembly with bounded/de-duplicated limitations.
-- Added Analytics stage claim / complete / fail lifecycle.
+
+### Runtime and scheduling
+- Added Analytics claim / complete / fail lifecycle.
 - Added deterministic Analytics executor.
 - Added strict Finance-stage lineage validation before Analytics persistence.
 - Added `BusinessAnalysisFlow.advance_finance()`:
   - requires AnalysisRun = RUNNING;
   - requires Finance = COMPLETED;
   - requires a persisted Finance `AnalysisResult`;
-  - reuses an existing initial Decision Analytics stage idempotently;
+  - reuses an existing Decision Analytics stage idempotently;
   - otherwise creates `DECISION_ANALYTICS`, attempt 1, `PENDING`.
+
+---
 
 ## Day 8 — Risk
 
-**Status: IMPLEMENTATION COMPLETE; FINAL VALIDATION PENDING**
+**Status: COMPLETED & VALIDATED**
 
-Completed implementation:
+### Structured Risk contracts
 - Added `RISK` as an explicit `AnalysisStage`.
 - Added structured Risk contracts covering:
-  - risk category;
+  - category;
   - likelihood;
   - impact;
   - confidence;
@@ -183,36 +121,41 @@ Completed implementation:
   - deterministic risk score;
   - deterministic risk level;
   - aggregate overall risk level.
-- Risk score and final level are authoritative deterministic Python calculations; the LLM does not calculate them.
-- Added bounded `RiskAnalysisContext` from:
-  - frozen IdeaProfile snapshot;
-  - Research Evidence Gate;
-  - accepted Market / Competitor / Customer results;
-  - completed Business Strategy;
-  - exact completed Finance result;
-  - exact completed Decision Analytics result.
-- Risk context validates Finance → Decision Analytics lineage consistency.
-- Added a single-agent Risk CrewAI runner over the existing `LLMGateway` adapter.
+- Risk score and final risk level are authoritative deterministic Python calculations; the LLM does not calculate them.
+
+### Bounded Risk context
+`RiskAnalysisContext` is built from:
+- frozen IdeaProfile snapshot;
+- Research Evidence Gate;
+- accepted Market / Competitor / Customer results;
+- completed Business Strategy;
+- exact completed Finance result;
+- exact completed Decision Analytics result.
+
+Risk context validates exact Finance → Decision Analytics lineage consistency.
+
+### Risk AI reasoning
+- Added single-agent Risk CrewAI runner over the existing `LLMGateway` adapter.
 - Risk Crew uses no tools and performs no new web research.
 - Risk Crew returns structured `RiskDraftAnalysis` only.
-- Added deterministic Risk grounding for:
-  - exact IdeaProfile fields;
-  - research evidence source IDs from declared research stages;
-  - available Finance metrics;
-  - available Decision Analytics KPIs;
-  - available sensitivity inputs.
-- Risk grounding rejects hallucinated lineage instead of persisting it.
-- Research Evidence Gate `INSUFFICIENT_EVIDENCE` states are preserved in final Risk limitations.
-- Hardened Risk grounding after audit:
-  - ordinary risks cannot use stage names alone as grounding;
-  - ordinary risks require at least one concrete reference;
-  - stage-only grounding is reserved for `EVIDENCE_QUALITY`;
-  - stage-only `EVIDENCE_QUALITY` claims are accepted only when the referenced research stage is actually marked insufficient by the Research Evidence Gate.
-- No arbitrary numeric confidence cap was added because the project does not currently define an authoritative categorical-evidence-quality → numeric-confidence mapping.
-- Added Risk stage claim / complete / fail lifecycle.
+- The LLM handles qualitative risk reasoning; Python owns authoritative scoring, validation, lifecycle, and persistence rules.
+
+### Deterministic Risk grounding
+- Validates exact IdeaProfile fields.
+- Validates research evidence IDs against the declared research stage.
+- Validates Finance metrics against the actual Finance context.
+- Validates Decision Analytics KPIs and sensitivity inputs against actual Analytics output.
+- Rejects hallucinated lineage instead of persisting it.
+- Preserves Research Evidence Gate `INSUFFICIENT_EVIDENCE` states in Risk limitations.
+- Ordinary risks cannot use stage names alone as grounding; they require at least one concrete reference.
+- Stage-only grounding is reserved for `EVIDENCE_QUALITY`, and only when the referenced research stage is actually marked insufficient by the Research Evidence Gate.
+- No arbitrary evidence-quality → numeric-confidence cap was invented because the project does not define an authoritative mapping yet.
+
+### Runtime and scheduling
+- Added Risk claim / complete / fail lifecycle.
 - Added guarded Risk executor:
   - builds bounded context before execution;
-  - runs the AI draft;
+  - runs the Risk AI draft;
   - performs deterministic grounding/scoring;
   - revalidates grounding at the persistence boundary;
   - fails safely if upstream state becomes inconsistent.
@@ -220,98 +163,74 @@ Completed implementation:
   - requires AnalysisRun = RUNNING;
   - requires Decision Analytics = COMPLETED;
   - requires a persisted Decision Analytics `AnalysisResult`;
-  - reuses an existing initial Risk stage idempotently;
+  - reuses an existing Risk stage idempotently;
   - otherwise creates `RISK`, attempt 1, `PENDING`.
+
+---
 
 ## Day 8 — Grounded Chat AI read access
 
-**Status: IMPLEMENTED AS A SELECTIVE READ CAPABILITY; FULL Q&A REMAINS DAY 11**
+**Status: IMPLEMENTED; FULL ANALYSIS/REPORT Q&A REMAINS DAY 11**
 
 Added `app/chat/analysis_context.py`:
 - provides explicit read-only access to persisted `DECISION_ANALYTICS` and `RISK` results;
 - requires both `idea_id` and `analysis_run_id`;
 - rejects cross-idea AnalysisRun access;
-- loads only explicitly requested analysis stages;
-- validates persisted result JSON through the authoritative Pydantic contracts before returning it;
+- loads only explicitly requested stages;
+- validates persisted JSON through authoritative Pydantic contracts before returning it;
 - returns unavailable stages as `None` instead of fabricating data;
-- is not injected into every normal chat turn.
+- is not injected into unrelated general chat turns.
 
-This intentionally does **not** implement the Day 11 report/analysis Q&A intents yet. Day 11 will call this capability from the relevant handlers so unrelated general chat does not load unnecessary analysis context.
+Day 11 will wire this selective capability into report/analysis Q&A intents.
 
-## Day 8 — Integration coverage
+---
 
-### Finance → Decision Analytics → Risk
-`tests/integration/analysis/test_finance_to_analytics_to_risk.py` provides real PostgreSQL transaction-backed lifecycle coverage while faking only the Risk AI draft boundary.
+## Day 8 — Integration and validation
 
-It covers:
+### Real PostgreSQL integration
+`tests/integration/analysis/test_finance_to_analytics_to_risk.py` covers:
 1. completed Finance → Decision Analytics scheduling → deterministic Analytics execution → persisted Analytics result → Risk scheduling → bounded Risk context → deterministic grounding/scoring → persisted Risk result → RISK COMPLETED;
-2. a Risk draft with hallucinated profile lineage → `INVALID_RISK_GROUNDING` → RISK FAILED → no Risk `AnalysisResult` persisted.
+2. hallucinated Risk profile lineage → `INVALID_RISK_GROUNDING` → RISK FAILED → no Risk `AnalysisResult` persisted.
 
-Focused unit coverage also exists for:
-- Analytics contracts;
-- KPI derivation;
-- scenario-relative comparisons;
-- sensitivity;
-- Analytics assembly;
-- Analytics claim/executor;
-- Finance → Analytics scheduling;
-- Risk contracts;
-- Risk context;
-- Risk Crew/runtime;
-- Risk grounding;
-- Risk claim/executor;
-- Analytics → Risk scheduling;
-- selective Chat Analytics/Risk read access.
+### Test hardening completed during validation
+- Replaced invalid `FinancialScenarioBundle` test placeholders with scenario-shaped dummy results.
+- Replaced incomplete Research Evidence Gate fixtures with valid gate objects where runtime validation is under test.
+- Replaced incomplete sensitivity fixtures with valid decrease/increase `SensitivityPoint` objects.
+- Kept Crew wiring tests isolated from unrelated context validation when appropriate.
+- Renamed colliding Pytest module basenames on Windows, including the Analytics calculator test and duplicate Risk test names.
+- No production behavior was weakened to make tests pass.
 
-## Day 8 — Final validation checkpoint
+### Recorded validation evidence
+The following results were explicitly observed during Day 8 validation:
+- Analytics focused batch: **19 passed, 0 failed, 0 errors**.
+- Selective Chat analysis-context tests: **6 passed, 0 failed, 0 errors**.
+- Finance → Decision Analytics → Risk integration: **2 passed, 0 failed, 0 errors**.
+- Full `tests/integration/analysis` suite: **5 passed, 0 failed, 0 errors**.
+- Final Risk focused batch, full unit suite, and full backend regression were re-run after fixture/module-name fixes and confirmed by the user as passing with **0 failed / 0 errors**.
+- Exact aggregate pass counts for the final unit/full-suite runs were not captured in the chat, so they are intentionally not invented here.
 
-**Final regression result has not yet been recorded.**
+**Day 8 exit criteria are satisfied.**
 
-The code is pushed, but this environment cannot run the repository's local Python/PostgreSQL test runtime and the repository currently has no GitHub Actions status checks. Do not mark Day 8 `COMPLETED & VALIDATED` until the following commands pass locally with **0 failed / 0 errors**.
-
-Run from `backend/`:
-
-```powershell
-uv run pytest tests/unit/analytics -v
-uv run pytest tests/unit/schemas/test_analytics_schemas.py tests/unit/schemas/test_analytics_runtime.py -v
-uv run pytest tests/unit/services/test_analytics_stage_claim.py tests/unit/services/test_analytics_executor.py -v
-uv run pytest tests/unit/flows/test_business_analysis_finance_advance.py tests/unit/flows/test_business_analysis_analytics_advance.py -v
-
-uv run pytest tests/unit/schemas/test_risk_schemas.py tests/unit/schemas/test_risk_runtime.py tests/unit/schemas/test_risk_stage_claim.py -v
-uv run pytest tests/unit/services/test_risk_context.py tests/unit/services/test_risk_grounding.py tests/unit/services/test_risk_stage_claim.py tests/unit/services/test_risk_executor.py -v
-uv run pytest tests/unit/crews/risk -v
-
-uv run pytest tests/unit/chat/test_analysis_context.py -v
-uv run pytest tests/integration/analysis/test_finance_to_analytics_to_risk.py -v
-
-uv run pytest tests/integration/analysis -v
-uv run pytest tests/unit -v
-uv run pytest -v
-```
-
-Acceptance:
-- 0 failed;
-- 0 errors;
-- no Day 7 regression;
-- Finance → Decision Analytics → Risk integration passes;
-- Risk hallucinated-lineage failure path passes;
-- selective Chat analysis-context tests pass.
-
-After the actual passing counts are available, update this file with the counts and mark Day 8 `COMPLETED & VALIDATED`.
+---
 
 ## Next milestone
 
 ### Day 9 — Validation + Final Decision
-After Day 8 final regression passes:
+
+**Status: NEXT**
+
+Planned scope:
 - Independent Validation;
-- targeted correction/retry;
+- bounded targeted correction/retry where justified;
 - Investment Committee;
 - final decision guardrail;
-- Chat AI explanation of decision/rationale/limitations.
+- grounded explanation of decision, rationale, confidence, limitations, and what could change the conclusion.
+
+---
 
 ## Important active rules
-- Frozen `AnalysisRun.profile_snapshot` is never silently mutated by analysis-time Finance answers.
-- Messages remain conversation history, not authoritative structured Finance state.
+- Frozen `AnalysisRun.profile_snapshot` is never silently mutated by analysis-time answers.
+- Messages remain conversation history, not authoritative structured state.
 - User pause is for decision-critical BASE inputs that cannot safely be resolved from authoritative state/research; it is not a fallback for arbitrary model uncertainty.
 - Competitor pricing is not venture pricing or willingness-to-pay proof.
 - Selected option values are resolved from persisted backend requests, not trusted client values.
@@ -319,4 +238,5 @@ After Day 8 final regression passes:
 - Risk AI never owns authoritative risk score or final risk level.
 - Risk stage names alone are not sufficient grounding for ordinary risk claims.
 - `INSUFFICIENT_EVIDENCE` remains a valid downstream state and must not trigger fabricated numbers.
-- Chat analysis context is loaded selectively for relevant capabilities; unrelated general chat does not automatically receive Analytics/Risk outputs.
+- Chat analysis context is loaded selectively; unrelated general chat does not automatically receive Analytics/Risk outputs.
+- Deterministic state/dependency/application code owns Analysis DAG progression; CrewAI does not own normal chat turns or stage scheduling.
