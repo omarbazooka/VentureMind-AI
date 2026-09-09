@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import jwt
@@ -213,19 +214,62 @@ def test_owned_idea_workspace_endpoints_reject_other_users():
         settings.enable_dev_auth_bypass = old_bypass
 
 
-def test_hs256_token_verification(monkeypatch):
-    """Test symmetric HS256 JWT decoding when configured."""
-    from pydantic import SecretStr
-
-    secret_key = "test-secret-key-32-bytes-long!!!!"
-    user_id = str(uuid4())
-    token = jwt.encode(
-        {"sub": user_id, "email": "test@venturemind.ai", "aud": "authenticated"},
+def _hs256_token(*, secret_key: str, issuer: str, user_id: str) -> str:
+    now = datetime.now(timezone.utc)
+    return jwt.encode(
+        {
+            "sub": user_id,
+            "email": "test@venturemind.ai",
+            "aud": "authenticated",
+            "iss": issuer,
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(minutes=5)).timestamp()),
+        },
         secret_key,
         algorithm="HS256",
     )
 
+
+def test_hs256_token_verification_validates_supabase_claims(monkeypatch):
+    """Legacy HS256 verification still validates issuer, audience, expiry, and subject."""
+    from pydantic import SecretStr
+
+    secret_key = "test-secret-key-32-bytes-long!!!!"
+    user_id = str(uuid4())
+    supabase_url = "https://test-project.supabase.co"
+    issuer = f"{supabase_url}/auth/v1"
+
+    monkeypatch.setattr(settings, "supabase_url", supabase_url)
     monkeypatch.setattr(settings, "supabase_jwt_secret", SecretStr(secret_key))
+
+    token = _hs256_token(
+        secret_key=secret_key,
+        issuer=issuer,
+        user_id=user_id,
+    )
     payload = _verify_token(token)
     assert payload["sub"] == user_id
     assert payload["email"] == "test@venturemind.ai"
+
+
+def test_hs256_token_rejects_wrong_issuer(monkeypatch):
+    """A correctly signed token from another issuer must not authenticate."""
+    from fastapi import HTTPException
+    from pydantic import SecretStr
+
+    secret_key = "test-secret-key-32-bytes-long!!!!"
+    user_id = str(uuid4())
+
+    monkeypatch.setattr(settings, "supabase_url", "https://expected.supabase.co")
+    monkeypatch.setattr(settings, "supabase_jwt_secret", SecretStr(secret_key))
+
+    token = _hs256_token(
+        secret_key=secret_key,
+        issuer="https://different.supabase.co/auth/v1",
+        user_id=user_id,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        _verify_token(token)
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Invalid authentication token"
