@@ -9,7 +9,12 @@ from app.schemas.analysis import (
     AnalysisStage,
     AnalysisStageStatus,
 )
-from app.schemas.finance import FinancialScenarioBundle
+from app.schemas.finance import (
+    FinancialAssumptionSet,
+    FinancialScenarioBundle,
+    FinancialScenarioKind,
+    FinancialScenarioResult,
+)
 from app.services.analytics_stage import (
     AnalyticsStageDependencyError,
     AnalyticsStageStateError,
@@ -17,11 +22,26 @@ from app.services.analytics_stage import (
 )
 
 
+def _dummy_result(
+    scenario: FinancialScenarioKind,
+) -> FinancialScenarioResult:
+    assumptions = FinancialAssumptionSet.model_construct(
+        scenario=scenario,
+    )
+    return FinancialScenarioResult.model_construct(
+        scenario=scenario,
+        assumptions=assumptions,
+        metrics=[],
+        missing_critical_inputs=[],
+        limitations=[],
+    )
+
+
 def dummy_bundle() -> FinancialScenarioBundle:
     return FinancialScenarioBundle.model_construct(
-        base=None,
-        upside=None,
-        downside=None,
+        base=_dummy_result(FinancialScenarioKind.BASE),
+        upside=_dummy_result(FinancialScenarioKind.UPSIDE),
+        downside=_dummy_result(FinancialScenarioKind.DOWNSIDE),
         comparisons=[],
         limitations=[],
     )

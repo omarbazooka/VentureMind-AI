@@ -61,7 +61,7 @@ def make_context() -> RiskAnalysisContext:
         comparisons=[],
         limitations=[],
     )
-    return RiskAnalysisContext(
+    return RiskAnalysisContext.model_construct(
         profile_snapshot=AnalysisProfileSnapshot(
             readiness=ProfileReadinessStatus.READY_FOR_ANALYSIS,
             profile_data={

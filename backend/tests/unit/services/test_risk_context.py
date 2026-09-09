@@ -9,7 +9,12 @@ from app.schemas.analysis import (
     AnalysisStage,
 )
 from app.schemas.analytics import DecisionAnalyticsResult
-from app.schemas.finance import FinancialScenarioBundle
+from app.schemas.finance import (
+    FinancialAssumptionSet,
+    FinancialScenarioBundle,
+    FinancialScenarioKind,
+    FinancialScenarioResult,
+)
 from app.schemas.intake import ProfileReadinessStatus
 from app.schemas.research import ResearchEvidenceGateResult
 from app.schemas.strategy import BusinessStrategyAnalysis
@@ -17,6 +22,31 @@ from app.services.risk_context import (
     RiskContextDependencyError,
     build_risk_analysis_context,
 )
+
+
+def _dummy_result(
+    scenario: FinancialScenarioKind,
+) -> FinancialScenarioResult:
+    assumptions = FinancialAssumptionSet.model_construct(
+        scenario=scenario,
+    )
+    return FinancialScenarioResult.model_construct(
+        scenario=scenario,
+        assumptions=assumptions,
+        metrics=[],
+        missing_critical_inputs=[],
+        limitations=[],
+    )
+
+
+def _dummy_bundle() -> FinancialScenarioBundle:
+    return FinancialScenarioBundle.model_construct(
+        base=_dummy_result(FinancialScenarioKind.BASE),
+        upside=_dummy_result(FinancialScenarioKind.UPSIDE),
+        downside=_dummy_result(FinancialScenarioKind.DOWNSIDE),
+        comparisons=[],
+        limitations=[],
+    )
 
 
 def test_builds_risk_context_from_authoritative_upstream_results():
@@ -49,13 +79,7 @@ def test_builds_risk_context_from_authoritative_upstream_results():
             executive_summary="Proceed with caution."
         ).model_dump(mode="json"),
     )
-    finance_bundle = FinancialScenarioBundle.model_construct(
-        base=None,
-        upside=None,
-        downside=None,
-        comparisons=[],
-        limitations=[],
-    )
+    finance_bundle = _dummy_bundle()
     finance_result = SimpleNamespace(
         stage_run_id=finance_stage_id,
         result_data=finance_bundle,

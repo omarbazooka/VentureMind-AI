@@ -8,11 +8,41 @@ from app.schemas.analysis import (
     AnalysisStage,
 )
 from app.schemas.analytics import DecisionAnalyticsResult
-from app.schemas.finance import FinancialScenarioBundle
+from app.schemas.finance import (
+    FinancialAssumptionSet,
+    FinancialScenarioBundle,
+    FinancialScenarioKind,
+    FinancialScenarioResult,
+)
 from app.schemas.intake import ProfileReadinessStatus
 from app.schemas.research import ResearchEvidenceGateResult
 from app.schemas.risk_runtime import RiskAnalysisContext
 from app.schemas.strategy import BusinessStrategyAnalysis
+
+
+def _dummy_result(
+    scenario: FinancialScenarioKind,
+) -> FinancialScenarioResult:
+    assumptions = FinancialAssumptionSet.model_construct(
+        scenario=scenario,
+    )
+    return FinancialScenarioResult.model_construct(
+        scenario=scenario,
+        assumptions=assumptions,
+        metrics=[],
+        missing_critical_inputs=[],
+        limitations=[],
+    )
+
+
+def _dummy_bundle() -> FinancialScenarioBundle:
+    return FinancialScenarioBundle.model_construct(
+        base=_dummy_result(FinancialScenarioKind.BASE),
+        upside=_dummy_result(FinancialScenarioKind.UPSIDE),
+        downside=_dummy_result(FinancialScenarioKind.DOWNSIDE),
+        comparisons=[],
+        limitations=[],
+    )
 
 
 def make_context(*, analytics_finance_id=None, finance_id=None):
@@ -29,13 +59,7 @@ def make_context(*, analytics_finance_id=None, finance_id=None):
         can_proceed=True,
         insufficient_stages=research_stages,
     )
-    bundle = FinancialScenarioBundle.model_construct(
-        base=None,
-        upside=None,
-        downside=None,
-        comparisons=[],
-        limitations=[],
-    )
+    bundle = _dummy_bundle()
 
     return {
         "profile_snapshot": AnalysisProfileSnapshot(
