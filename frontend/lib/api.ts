@@ -1,6 +1,7 @@
 /**
- * VentureMind AI API Client
- * Connects frontend directly to the FastAPI backend.
+ * VentureMind AI typed browser API client.
+ * Keep this file aligned with the FastAPI contracts; do not invent frontend-only
+ * analysis fields or endpoint shapes.
  */
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
@@ -12,6 +13,33 @@ export interface IdeaItem {
   owner_user_id?: string | null;
   state: string;
   created_at?: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export interface ChatTurnResponse {
+  status: string;
+  user_message: ChatMessage;
+  assistant_message: ChatMessage;
+  clarification?: unknown | null;
+  profile_version?: number | null;
+  profile_readiness?: string | null;
+  conflicts: unknown[];
+  unknown_conflicts: unknown[];
+}
+
+export interface IdeaProfile {
+  idea_id: string;
+  version: number;
+  readiness: string;
+  profile_data: Record<string, unknown>;
+  profile_metadata: Record<string, unknown>;
+  unknown_fields: string[];
 }
 
 export interface StageProgressItem {
@@ -27,8 +55,11 @@ export interface StageProgressItem {
 export interface PendingInputOption {
   option_id: string;
   label: string;
-  description?: string;
-  value: number;
+  value: number | string;
+  currency?: string | null;
+  unit_label?: string | null;
+  period?: string | null;
+  rationale?: string | null;
 }
 
 export interface PendingInputSummary {
@@ -46,7 +77,7 @@ export interface PendingInputSummary {
 export interface AnalysisProgressResponse {
   idea_id: string;
   analysis_run_id?: string | null;
-  run_status: string; // 'NOT_STARTED' | 'QUEUED' | 'RUNNING' | 'PAUSED_FOR_USER' | 'COMPLETED' | 'FAILED'
+  run_status: string;
   current_stage?: string | null;
   completed_stages: string[];
   stage_runs: StageProgressItem[];
@@ -57,273 +88,346 @@ export interface AnalysisProgressResponse {
   error_message?: string | null;
 }
 
+export interface AnalysisRunCreateResponse {
+  run_id: string;
+  idea_id: string;
+  profile_id: string;
+  profile_version: number;
+  status: string;
+  created_at: string;
+}
+
+export interface FinancialMetric {
+  metric_name: string;
+  value: string | number;
+  currency?: string | null;
+  unit: string;
+  formula?: string;
+  input_names?: string[];
+  provenance?: string;
+  period?: string | null;
+}
+
+export interface FinancialScenario {
+  scenario: string;
+  assumptions: Record<string, any>;
+  metrics: FinancialMetric[];
+  missing_critical_inputs: string[];
+  limitations: string[];
+}
+
+export interface ReportMetricValue {
+  status: 'AVAILABLE' | 'UNAVAILABLE' | 'INSUFFICIENT_EVIDENCE';
+  value?: string | null;
+  unit?: string | null;
+  explanation?: string | null;
+}
+
+export interface DecisionLineageReference {
+  kind: string;
+  value: string;
+  stage?: string | null;
+}
+
+export interface FinalDecision {
+  decision: 'GO' | 'CONDITIONAL_GO' | 'NO_GO' | 'INSUFFICIENT_EVIDENCE';
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  rationale: string;
+  supporting_evidence_lineage: DecisionLineageReference[];
+  strongest_positive_signals: string[];
+  strongest_negative_signals: string[];
+  critical_assumptions: string[];
+  limitations: string[];
+  what_could_change: string[];
+  recommended_next_steps: string[];
+  upstream_stage_run_ids: Record<string, string>;
+}
+
 export interface StructuredReport {
+  id: string;
   idea_id: string;
   analysis_run_id: string;
   version: number;
-  executive_summary: {
-    venture_name: string;
-    one_liner: string;
-    investment_recommendation: string;
-    confidence_score: number;
-    summary_narrative: string;
-    key_strengths: string[];
-    critical_risks: string[];
-    next_milestones: string[];
-  };
-  market_intelligence: {
-    tam_sam_som: {
-      tam_estimate?: string | null;
-      sam_estimate?: string | null;
-      som_estimate?: string | null;
-      confidence?: string | null;
-    };
-    target_customer_persona?: string | null;
-    market_growth_rate?: string | null;
-    key_trends: string[];
+  title: string;
+  executive_summary: string;
+  decision: FinalDecision;
+  profile_summary: Record<string, unknown>;
+  market: {
+    summary: string;
     evidence_quality: string;
-  };
-  competitor_intelligence: {
-    direct_competitors: Array<{
-      name: string;
-      strengths: string[];
-      weaknesses: string[];
-      pricing_model?: string | null;
-    }>;
-    competitive_moat?: string | null;
-  };
-  financial_analysis: {
-    key_metrics: {
-      net_present_value?: { value: string; currency: string } | null;
-      internal_rate_of_return?: { value: string } | null;
-      payback_period_months?: { value: string } | null;
-      monthly_burn_rate?: { value: string; currency: string } | null;
-      break_even_units?: { value: string } | null;
+    findings: Array<Record<string, any>>;
+    market_metrics: {
+      tam: ReportMetricValue;
+      sam: ReportMetricValue;
+      som: ReportMetricValue;
+      cagr: ReportMetricValue;
+      willingness_to_pay: ReportMetricValue;
     };
-    scenarios: {
-      base?: any;
-      upside?: any;
-      downside?: any;
-    };
-  };
-  decision_analytics: {
-    overall_score?: number | null;
-    sensitivity_ranking: Array<{
-      input_name: string;
-      elasticity_score: number;
-      impact_level: string;
-    }>;
-  };
-  risk_assessment: {
-    identified_risks: Array<{
-      title: string;
-      category: string;
-      likelihood: string;
-      impact: string;
-      mitigation_actions: string[];
-    }>;
-  };
-  independent_validation: {
-    assessment_status: string;
-    unresolved_issues: string[];
     limitations: string[];
   };
-  investment_committee: {
-    decision: 'GO' | 'CONDITIONAL_GO' | 'NO_GO' | 'INSUFFICIENT_EVIDENCE';
-    confidence: 'HIGH' | 'MEDIUM' | 'LOW';
-    decision_rationale: string;
-    critical_conditions: string[];
-    positive_signals: string[];
-    negative_signals: string[];
+  competitors: {
+    summary: string;
+    evidence_quality: string;
+    competitors: Array<Record<string, any>>;
+    findings: Array<Record<string, any>>;
+    limitations: string[];
   };
-  sources_ledger: Array<{
+  customer: {
+    summary: string;
+    evidence_quality: string;
+    findings: Array<Record<string, any>>;
+    limitations: string[];
+  };
+  strategy: {
+    executive_summary: string;
+    positioning: Array<Record<string, any>>;
+    value_proposition: Array<Record<string, any>>;
+    business_model_implications: Array<Record<string, any>>;
+    go_to_market: Array<Record<string, any>>;
+    strategic_strengths: Array<Record<string, any>>;
+    strategic_weaknesses: Array<Record<string, any>>;
+    critical_assumptions: Array<Record<string, any>>;
+    limitations: string[];
+  };
+  finance: {
+    executive_summary: string;
+    base_scenario: FinancialScenario;
+    upside_scenario: FinancialScenario;
+    downside_scenario: FinancialScenario;
+    comparisons: Array<Record<string, any>>;
+    limitations: string[];
+  };
+  analytics: {
+    kpis: Array<Record<string, any>>;
+    scenario_relative_changes: Array<Record<string, any>>;
+    sensitivity?: Record<string, any> | null;
+    limitations: string[];
+  };
+  risk: {
+    executive_summary: string;
+    overall_level?: string | null;
+    risks: Array<Record<string, any>>;
+    limitations: string[];
+  };
+  validation: {
+    status: string;
+    executive_assessment: string;
+    issues: Array<Record<string, any>>;
+    limitations: string[];
+  };
+  chart_data: {
+    break_even_comparison: Array<Record<string, any>>;
+    monthly_projections: Array<Record<string, any>>;
+    sensitivity_ranking: Array<Record<string, any>>;
+    risk_matrix: Array<Record<string, any>>;
+  };
+  sources: Array<{
     source_id: string;
     title: string;
     url?: string | null;
+    provenance: string;
     stage: string;
   }>;
+  created_at: string;
 }
 
-export interface ReportQAResponse {
-  question: string;
-  answer: string;
-  grounded_in_report: boolean;
-  cited_sections: string[];
-  suggested_followups: string[];
+export interface ReportActionRequest {
+  action:
+    | 'EXPLAIN'
+    | 'EXPLAIN_SIMPLY'
+    | 'SHOW_EVIDENCE'
+    | 'SHOW_SOURCES'
+    | 'EXPLAIN_CALCULATION'
+    | 'EXPLAIN_CHART'
+    | 'CHALLENGE_CONCLUSION'
+    | 'WHAT_COULD_CHANGE'
+    | 'ASK_VENTUREMIND';
+  target_section?: string;
+  target_metric?: string;
+  question?: string;
 }
 
 export interface ReportActionResponse {
-  action_type: string;
-  status: string;
-  summary: string;
-  details: Record<string, any>;
-  suggested_next_actions: string[];
+  action: string;
+  title: string;
+  content: string;
+  grounding_references: string[];
+  suggested_followups: string[];
+  metadata: Record<string, any>;
+}
+
+export interface ReportQAResponse {
+  answer: string;
+  grounding_references: string[];
+  suggested_followups: string[];
 }
 
 export interface ReportComparisonResponse {
   idea_id: string;
+  v1_report_id: string;
   v1_version: number;
+  v2_report_id: string;
   v2_version: number;
-  decision_comparison: {
-    v1_decision: string;
-    v2_decision: string;
-    changed: boolean;
-  };
-  financial_comparison: Array<{
-    metric_name: string;
-    v1_value: any;
-    v2_value: any;
-    delta: any;
-    direction: string;
-  }>;
-  risk_comparison: {
-    v1_high_risks: number;
-    v2_high_risks: number;
-    net_risk_change: number;
-  };
-  lineage_comparison: {
-    reused_stages: string[];
-    reanalysis_reason?: string;
-  };
+  v1_analysis_run_id: string;
+  v2_analysis_run_id: string;
+  decision_comparison: Record<string, any>;
+  financial_comparison: Array<Record<string, any>>;
+  risk_comparison: Record<string, any>;
+  lineage_comparison: Record<string, any>;
   executive_takeaway: string;
 }
 
-function getAuthHeaders(): HeadersInit {
-  const headers: HeadersInit = {
+function authHeaders(): HeadersInit {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
   if (typeof window !== 'undefined') {
-    const token = localStorage.getItem('supabase_token');
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
+    const token =
+      localStorage.getItem('venturemind_access_token') ||
+      localStorage.getItem('supabase_token');
+    if (token) headers.Authorization = `Bearer ${token}`;
   }
   return headers;
 }
 
-export async function listIdeas(): Promise<IdeaItem[]> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/ideas`, {
-    headers: getAuthHeaders(),
+async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      ...authHeaders(),
+      ...(init.headers || {}),
+    },
   });
-  if (!res.ok) throw new Error(`Failed to list ideas: ${res.statusText}`);
-  return res.json();
+
+  if (!response.ok) {
+    let detail = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      if (typeof body?.detail === 'string') detail = body.detail;
+      else if (body?.detail) detail = JSON.stringify(body.detail);
+    } catch {
+      // Keep the HTTP status when the error response is not JSON.
+    }
+    throw new Error(detail);
+  }
+
+  return response.json() as Promise<T>;
 }
 
-export async function getIdea(ideaId: string): Promise<IdeaItem> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/ideas/${ideaId}`, {
-    headers: getAuthHeaders(),
-  });
-  if (!res.ok) throw new Error(`Failed to fetch idea: ${res.statusText}`);
-  return res.json();
+export function setAccessToken(token: string | null): void {
+  if (typeof window === 'undefined') return;
+  if (token) localStorage.setItem('venturemind_access_token', token);
+  else localStorage.removeItem('venturemind_access_token');
 }
 
-export async function createIdea(data: { title: string; description: string }): Promise<IdeaItem> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/ideas`, {
+export function listIdeas(): Promise<IdeaItem[]> {
+  return apiFetch('/api/v1/ideas');
+}
+
+export function getIdea(ideaId: string): Promise<IdeaItem> {
+  return apiFetch(`/api/v1/ideas/${ideaId}`);
+}
+
+export function createIdea(data: {
+  title: string;
+  description: string;
+}): Promise<IdeaItem> {
+  return apiFetch('/api/v1/ideas', {
     method: 'POST',
-    headers: getAuthHeaders(),
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error(`Failed to create idea: ${res.statusText}`);
-  return res.json();
 }
 
-export async function startAnalysis(ideaId: string): Promise<{ idea_id: string; analysis_run_id: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/ideas/${ideaId}/analysis`, {
+export function getProfile(ideaId: string): Promise<IdeaProfile> {
+  return apiFetch(`/api/v1/ideas/${ideaId}/profile`, { cache: 'no-store' });
+}
+
+export function getMessages(ideaId: string): Promise<ChatMessage[]> {
+  return apiFetch(`/api/v1/ideas/${ideaId}/messages`, { cache: 'no-store' });
+}
+
+export function sendMessage(ideaId: string, content: string): Promise<ChatTurnResponse> {
+  return apiFetch(`/api/v1/ideas/${ideaId}/messages`, {
     method: 'POST',
-    headers: getAuthHeaders(),
+    body: JSON.stringify({ content }),
   });
-  if (!res.ok) throw new Error(`Failed to start analysis: ${res.statusText}`);
-  return res.json();
 }
 
-export async function getAnalysisProgress(ideaId: string): Promise<AnalysisProgressResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/ideas/${ideaId}/analysis/progress`, {
-    headers: getAuthHeaders(),
+export function startAnalysis(ideaId: string): Promise<AnalysisRunCreateResponse> {
+  return apiFetch(`/api/v1/ideas/${ideaId}/analysis`, { method: 'POST' });
+}
+
+export function getAnalysisProgress(
+  ideaId: string,
+): Promise<AnalysisProgressResponse> {
+  return apiFetch(`/api/v1/ideas/${ideaId}/analysis/progress`, {
     cache: 'no-store',
   });
-  if (!res.ok) throw new Error(`Failed to fetch progress: ${res.statusText}`);
-  return res.json();
 }
 
-export async function answerPendingInput(
+export function answerPendingInput(
   ideaId: string,
   inputId: string,
   answer: {
-    answer_mode: 'SELECTED_OPTION' | 'CUSTOM_INPUT';
-    selected_option_id?: string;
-    custom_value?: number;
+    choice?: string;
+    value?: number;
     currency?: string;
     unit_label?: string;
     period?: string;
-    rationale?: string;
-  }
-): Promise<any> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/ideas/${ideaId}/analysis/inputs/${inputId}/answer`, {
+  },
+): Promise<{
+  input_id: string;
+  status: string;
+  analysis_run_status: string;
+  message: string;
+}> {
+  return apiFetch(`/api/v1/ideas/${ideaId}/analysis/inputs/${inputId}/answer`, {
     method: 'POST',
-    headers: getAuthHeaders(),
     body: JSON.stringify(answer),
   });
-  if (!res.ok) throw new Error(`Failed to answer input: ${res.statusText}`);
-  return res.json();
 }
 
-export async function getReport(ideaId: string, version?: number): Promise<StructuredReport> {
-  const url = version
-    ? `${API_BASE_URL}/api/v1/ideas/${ideaId}/report/versions/${version}`
-    : `${API_BASE_URL}/api/v1/ideas/${ideaId}/report`;
-  const res = await fetch(url, {
-    headers: getAuthHeaders(),
-    cache: 'no-store',
-  });
-  if (!res.ok) throw new Error(`Failed to fetch report: ${res.statusText}`);
-  return res.json();
-}
-
-export async function askReportQuestion(ideaId: string, question: string): Promise<ReportQAResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/ideas/${ideaId}/report/qa`, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ question }),
-  });
-  if (!res.ok) throw new Error(`Report Q&A request failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function executeReportAction(
+export function getReport(
   ideaId: string,
-  actionType: string,
-  parameters: Record<string, any> = {}
+  version?: number,
+): Promise<StructuredReport> {
+  const path = version
+    ? `/api/v1/ideas/${ideaId}/reports/${version}`
+    : `/api/v1/ideas/${ideaId}/report/latest`;
+  return apiFetch(path, { cache: 'no-store' });
+}
+
+export function executeReportAction(
+  ideaId: string,
+  request: ReportActionRequest,
 ): Promise<ReportActionResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/ideas/${ideaId}/report/action`, {
+  return apiFetch(`/api/v1/ideas/${ideaId}/report/action`, {
     method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ action_type: actionType, parameters }),
+    body: JSON.stringify(request),
   });
-  if (!res.ok) throw new Error(`Report action failed: ${res.statusText}`);
-  return res.json();
 }
 
-export async function reanalyzeIdea(
+export async function askReportQuestion(
   ideaId: string,
-  data: { target_stage?: string; profile_updates?: Record<string, any>; reason?: string }
-): Promise<any> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/ideas/${ideaId}/reanalyze`, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify(data),
+  question: string,
+): Promise<ReportQAResponse> {
+  const response = await executeReportAction(ideaId, {
+    action: 'ASK_VENTUREMIND',
+    question,
   });
-  if (!res.ok) throw new Error(`Reanalysis failed: ${res.statusText}`);
-  return res.json();
+  return {
+    answer: response.content,
+    grounding_references: response.grounding_references,
+    suggested_followups: response.suggested_followups,
+  };
 }
 
-export async function compareReports(
+export function compareReports(
   ideaId: string,
   v1: number,
-  v2: number
+  v2: number,
 ): Promise<ReportComparisonResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/ideas/${ideaId}/report/compare?v1=${v1}&v2=${v2}`, {
-    headers: getAuthHeaders(),
+  return apiFetch(`/api/v1/ideas/${ideaId}/report/compare?v1=${v1}&v2=${v2}`, {
+    cache: 'no-store',
   });
-  if (!res.ok) throw new Error(`Report comparison failed: ${res.statusText}`);
-  return res.json();
 }
