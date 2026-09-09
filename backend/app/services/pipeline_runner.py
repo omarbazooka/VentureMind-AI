@@ -5,11 +5,10 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from app.core.database import SessionLocal, engine
+from app.core.database import SessionLocal
 from app.flows.business_analysis_flow import BusinessAnalysisFlow
-from app.models.analysis_result import AnalysisResult
 from app.models.analysis_run import AnalysisRun
 from app.models.analysis_stage_run import AnalysisStageRun
 from app.schemas.analysis import (
@@ -27,10 +26,7 @@ from app.services.customer_intelligence_executor import (
     execute_customer_intelligence_stage,
 )
 from app.services.decision_executor import execute_decision_stage
-from app.services.finance_executor import (
-    FinanceExecutionOutcome,
-    execute_finance_stage,
-)
+from app.services.finance_executor import execute_finance_stage
 from app.services.market_research_executor import execute_market_research_stage
 from app.services.report_generator import generate_structured_report
 from app.services.risk_executor import execute_risk_stage
@@ -171,10 +167,13 @@ class PipelineRunner:
 
     def run(self, analysis_run_id: UUID) -> AnalysisRunStatus:
         """Run the analysis pipeline sequentially until completion or pause."""
-        logger.info("Starting pipeline execution for analysis_run %s", analysis_run_id)
+        logger.info(
+            "Starting pipeline execution for analysis_run %s",
+            analysis_run_id,
+        )
 
         try:
-            # 1. Start research if run is QUEUED
+            # 1. Start research if run is QUEUED.
             with self.session_factory() as db:
                 run = db.get(AnalysisRun, analysis_run_id)
                 if run is None:
@@ -197,7 +196,9 @@ class PipelineRunner:
                     self._flow.initialize(db=db, run_id=analysis_run_id)
                     db.commit()
 
-            # 2. Execute initial research stages
+            # 2. Execute initial research stages. The Job Fair runner keeps this
+            # sequential for now; the architecture can execute the three research
+            # branches in parallel once durable worker execution is introduced.
             for stage, runner_factory, executor in (
                 (
                     AnalysisStage.MARKET_RESEARCH,
@@ -222,14 +223,18 @@ class PipelineRunner:
                     )
 
                 if stage_run.status != AnalysisStageStatus.COMPLETED.value:
-                    logger.info("Executing stage %s for run %s", stage.value, analysis_run_id)
+                    logger.info(
+                        "Executing stage %s for run %s",
+                        stage.value,
+                        analysis_run_id,
+                    )
                     executor(
                         session_factory=self.session_factory,
                         stage_run_id=stage_run.id,
                         runner=runner_factory(),
                     )
 
-            # 3. Advance research / Evidence gate checkpoint
+            # 3. Advance research / Evidence Gate checkpoint.
             max_gate_cycles = 3
             gate_cycle = 0
             while gate_cycle < max_gate_cycles:
@@ -281,9 +286,10 @@ class PipelineRunner:
 
                 break
 
-            # 4. Business Strategy
+            # 4. Business Strategy.
             strategy_stage_run = self._get_latest_stage_run(
-                analysis_run_id, AnalysisStage.BUSINESS_STRATEGY
+                analysis_run_id,
+                AnalysisStage.BUSINESS_STRATEGY,
             )
             if strategy_stage_run is None:
                 raise PipelineExecutionError(
@@ -291,14 +297,17 @@ class PipelineRunner:
                 )
 
             if strategy_stage_run.status != AnalysisStageStatus.COMPLETED.value:
-                logger.info("Executing Business Strategy for run %s", analysis_run_id)
+                logger.info(
+                    "Executing Business Strategy for run %s",
+                    analysis_run_id,
+                )
                 execute_business_strategy_stage(
                     session_factory=self.session_factory,
                     stage_run_id=strategy_stage_run.id,
                     runner=self._strategy_runner_factory(),
                 )
 
-            # 5. Finance
+            # 5. Finance.
             with self.session_factory() as db:
                 finance_stage_run = self._flow.advance_strategy(
                     db=db,
@@ -307,7 +316,10 @@ class PipelineRunner:
                 db.commit()
 
             if finance_stage_run.status != AnalysisStageStatus.COMPLETED.value:
-                logger.info("Executing Finance stage for run %s", analysis_run_id)
+                logger.info(
+                    "Executing Finance stage for run %s",
+                    analysis_run_id,
+                )
                 outcome = execute_finance_stage(
                     session_factory=self.session_factory,
                     stage_run_id=finance_stage_run.id,
@@ -321,7 +333,7 @@ class PipelineRunner:
                     )
                     return AnalysisRunStatus.PAUSED_FOR_USER
 
-            # 6. Decision Analytics
+            # 6. Decision Analytics.
             with self.session_factory() as db:
                 analytics_stage_run = self._flow.advance_finance(
                     db=db,
@@ -330,13 +342,16 @@ class PipelineRunner:
                 db.commit()
 
             if analytics_stage_run.status != AnalysisStageStatus.COMPLETED.value:
-                logger.info("Executing Decision Analytics for run %s", analysis_run_id)
+                logger.info(
+                    "Executing Decision Analytics for run %s",
+                    analysis_run_id,
+                )
                 execute_decision_analytics_stage(
                     session_factory=self.session_factory,
                     stage_run_id=analytics_stage_run.id,
                 )
 
-            # 7. Risk
+            # 7. Risk.
             with self.session_factory() as db:
                 risk_stage_run = self._flow.advance_analytics(
                     db=db,
@@ -345,82 +360,61 @@ class PipelineRunner:
                 db.commit()
 
             if risk_stage_run.status != AnalysisStageStatus.COMPLETED.value:
-                logger.info("Executing Risk analysis for run %s", analysis_run_id)
+                logger.info(
+                    "Executing Risk analysis for run %s",
+                    analysis_run_id,
+                )
                 execute_risk_stage(
                     session_factory=self.session_factory,
                     stage_run_id=risk_stage_run.id,
                     runner=self._risk_runner_factory(),
                 )
 
-            # 8. Validation
+            # 8. Independent Validation.
             with self.session_factory() as db:
-                val_stage_run = self._flow.advance_risk(
+                validation_stage_run = self._flow.advance_risk(
                     db=db,
                     run_id=analysis_run_id,
                 )
                 db.commit()
 
-            if val_stage_run.status != AnalysisStageStatus.COMPLETED.value:
-                logger.info("Executing Independent Validation for run %s", analysis_run_id)
+            if validation_stage_run.status != AnalysisStageStatus.COMPLETED.value:
+                logger.info(
+                    "Executing Independent Validation for run %s",
+                    analysis_run_id,
+                )
                 execute_validation_stage(
                     session_factory=self.session_factory,
-                    stage_run_id=val_stage_run.id,
+                    stage_run_id=validation_stage_run.id,
                     runner=self._validation_runner_factory(),
                 )
 
-            # 9. Advance validation & check deterministic retries
+            # 9. Day 9 Validation is a gate only. It may identify affected
+            # stages, but it must not schedule direct upstream retries. Day 12's
+            # deterministic dependency resolver owns invalidation/re-analysis.
             with self.session_factory() as db:
-                next_stage_run = self._flow.advance_validation(
+                decision_run = self._flow.advance_validation(
                     db=db,
                     run_id=analysis_run_id,
                 )
                 db.commit()
 
-            # If validation triggered a retry for an earlier stage
             if (
-                next_stage_run is not None
-                and next_stage_run.stage != AnalysisStage.INVESTMENT_COMMITTEE.value
+                decision_run is None
+                or decision_run.stage
+                != AnalysisStage.INVESTMENT_COMMITTEE.value
             ):
-                logger.info(
-                    "Validation requested deterministic retry for stage %s (attempt %d)",
-                    next_stage_run.stage,
-                    next_stage_run.attempt,
+                raise PipelineExecutionError(
+                    "Validation did not produce the Investment Committee stage; "
+                    "direct validation retries are not allowed in this pipeline"
                 )
-                # Execute the retried stage
-                if next_stage_run.stage == AnalysisStage.FINANCE.value:
-                    execute_finance_stage(
-                        session_factory=self.session_factory,
-                        stage_run_id=next_stage_run.id,
-                        assumption_runner=self._finance_runner_factory(),
-                    )
-                elif next_stage_run.stage == AnalysisStage.RISK.value:
-                    execute_risk_stage(
-                        session_factory=self.session_factory,
-                        stage_run_id=next_stage_run.id,
-                        runner=self._risk_runner_factory(),
-                    )
 
-                # Now advance to decision
-                with self.session_factory() as db:
-                    decision_run = self._flow._ensure_decision_stage_run(
-                        db=db,
-                        analysis_run_id=analysis_run_id,
-                    )
-                    db.commit()
-            else:
-                decision_run = next_stage_run
-
-            # 10. Investment Committee / Final Decision
-            if decision_run is None:
-                with self.session_factory() as db:
-                    decision_run = self._flow._ensure_decision_stage_run(
-                        db=db,
-                        analysis_run_id=analysis_run_id,
-                    )
-                    db.commit()
-
+            # 10. Investment Committee / Final Decision.
             if decision_run.status != AnalysisStageStatus.COMPLETED.value:
-                logger.info("Executing Final Decision stage for run %s", analysis_run_id)
+                logger.info(
+                    "Executing Final Decision stage for run %s",
+                    analysis_run_id,
+                )
                 execute_decision_stage(
                     session_factory=self.session_factory,
                     stage_run_id=decision_run.id,
@@ -434,8 +428,11 @@ class PipelineRunner:
                 )
                 db.commit()
 
-            # 11. Compile Structured Report & Complete Run
-            logger.info("Compiling Structured Report for run %s", analysis_run_id)
+            # 11. Compile authoritative Structured Report and complete the run.
+            logger.info(
+                "Compiling Structured Report for run %s",
+                analysis_run_id,
+            )
             with self.session_factory() as db:
                 generate_structured_report(
                     db=db,
@@ -449,11 +446,18 @@ class PipelineRunner:
                     run.error_message = None
                 db.commit()
 
-            logger.info("Pipeline completed successfully for run %s", analysis_run_id)
+            logger.info(
+                "Pipeline completed successfully for run %s",
+                analysis_run_id,
+            )
             return AnalysisRunStatus.COMPLETED
 
         except Exception as exc:
-            logger.exception("Pipeline execution failed for run %s: %s", analysis_run_id, exc)
+            logger.exception(
+                "Pipeline execution failed for run %s: %s",
+                analysis_run_id,
+                exc,
+            )
             self._mark_run_failed(
                 analysis_run_id=analysis_run_id,
                 error_code="PIPELINE_ERROR",
