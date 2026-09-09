@@ -3,15 +3,13 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from app.flows.business_analysis_flow import (
     BusinessAnalysisFlow,
     BusinessAnalysisRunStateError,
 )
-from app.schemas.analysis import (
-    AnalysisStage,
-    AnalysisStageStatus,
-)
+from app.schemas.analysis import AnalysisStage, AnalysisStageStatus
 from app.schemas.validation import ValidationAnalysis, ValidationStatus
 
 
@@ -44,7 +42,7 @@ def test_advance_risk_schedules_validation():
         risk_stage,
         risk_result,
         analysis_run,
-        None,  # No existing validation stage
+        None,
     ]
 
     result = BusinessAnalysisFlow().advance_risk(db=db, run_id=run_id)
@@ -59,10 +57,12 @@ def test_advance_risk_schedules_validation():
 def test_advance_validation_schedules_investment_committee():
     run_id = uuid4()
     analysis_run = SimpleNamespace(id=run_id, status="RUNNING")
-    val_stage, val_result = make_completed_stage(run_id, AnalysisStage.INDEPENDENT_VALIDATION)
+    val_stage, val_result = make_completed_stage(
+        run_id, AnalysisStage.INDEPENDENT_VALIDATION
+    )
     val_result.result_data = ValidationAnalysis(
         status=ValidationStatus.PASSED,
-        executive_assessment="All clean",
+        executive_assessment="All checks passed cleanly.",
         can_proceed=True,
     ).model_dump(mode="json")
 
@@ -72,7 +72,7 @@ def test_advance_validation_schedules_investment_committee():
         val_stage,
         val_result,
         analysis_run,
-        None,  # No existing investment committee stage
+        None,
     ]
 
     result = BusinessAnalysisFlow().advance_validation(db=db, run_id=run_id)
@@ -87,49 +87,33 @@ def test_advance_validation_schedules_investment_committee():
 def test_advance_validation_rejects_unsuccessful_validation():
     run_id = uuid4()
     analysis_run = SimpleNamespace(id=run_id, status="RUNNING")
-    val_stage, val_result = make_completed_stage(run_id, AnalysisStage.INDEPENDENT_VALIDATION)
+    val_stage, val_result = make_completed_stage(
+        run_id, AnalysisStage.INDEPENDENT_VALIDATION
+    )
     val_result.result_data = ValidationAnalysis(
         status=ValidationStatus.FAILED,
-        executive_assessment="Critical flaw found",
+        executive_assessment="Critical grounded flaw found.",
         can_proceed=False,
     ).model_dump(mode="json")
 
     db = Mock()
-    db.scalar.side_effect = [
-        analysis_run,
-        val_stage,
-        val_result,
-    ]
+    db.scalar.side_effect = [analysis_run, val_stage, val_result]
 
-    with pytest.raises(BusinessAnalysisRunStateError, match="Validation failed and does not permit proceeding"):
+    with pytest.raises(
+        BusinessAnalysisRunStateError,
+        match="Validation failed and does not permit proceeding",
+    ):
         BusinessAnalysisFlow().advance_validation(db=db, run_id=run_id)
 
 
-def test_advance_validation_schedules_bounded_targeted_retry():
-    run_id = uuid4()
-    analysis_run = SimpleNamespace(id=run_id, status="RUNNING")
-    val_stage, val_result = make_completed_stage(run_id, AnalysisStage.INDEPENDENT_VALIDATION)
-    val_result.result_data = ValidationAnalysis(
-        status=ValidationStatus.FAILED,
-        executive_assessment="Critical flaw in finance modeling",
-        can_proceed=False,
-        retry_stages=[AnalysisStage.FINANCE],
-    ).model_dump(mode="json")
-
-    db = Mock()
-    db.scalar.side_effect = [
-        analysis_run,
-        val_stage,
-        val_result,
-    ]
-    # Mock previous stage_run attempt = 1
-    prev_finance = SimpleNamespace(attempt=1)
-    db.scalars.return_value.all.return_value = [prev_finance]
-
-    result = BusinessAnalysisFlow().advance_validation(db=db, run_id=run_id)
-
-    assert result.analysis_run_id == run_id
-    assert result.stage == AnalysisStage.FINANCE.value
-    assert result.attempt == 2
-    assert result.status == AnalysisStageStatus.PENDING.value
-    db.add.assert_called_once_with(result)
+def test_validation_contract_rejects_direct_targeted_retry_scheduling():
+    with pytest.raises(
+        ValidationError,
+        match="dependency-aware re-analysis owns retry scheduling",
+    ):
+        ValidationAnalysis(
+            status=ValidationStatus.FAILED,
+            executive_assessment="Finance requires a grounded correction.",
+            can_proceed=False,
+            retry_stages=[AnalysisStage.FINANCE],
+        )
