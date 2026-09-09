@@ -5,7 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.auth import AuthenticatedUser, get_current_user, get_optional_user
+from app.core.auth import (
+    AuthenticatedUser,
+    enforce_idea_ownership,
+    get_current_user,
+    get_optional_user,
+)
 from app.core.database import get_db
 from app.models.chat_session import ChatSession
 from app.models.idea import Idea
@@ -17,20 +22,6 @@ router = APIRouter(prefix="/ideas", tags=["ideas"])
 DbSession = Annotated[Session, Depends(get_db)]
 OptionalUser = Annotated[AuthenticatedUser | None, Depends(get_optional_user)]
 CurrentUser = Annotated[AuthenticatedUser, Depends(get_current_user)]
-
-
-def check_idea_ownership(idea: Idea, user: AuthenticatedUser | None) -> None:
-    """Enforce ownership access control.
-
-    If idea has an owner, user must match owner.
-    Unowned ideas (e.g. initial demo/test ideas) are publicly accessible.
-    """
-    if idea.owner_user_id is not None:
-        if user is None or user.user_id != idea.owner_user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied: you do not have permission to access this idea",
-            )
 
 
 @router.get(
@@ -131,7 +122,10 @@ def get_idea(
             detail="Idea not found",
         )
 
-    check_idea_ownership(idea, user)
+    enforce_idea_ownership(
+        owner_user_id=idea.owner_user_id,
+        user=user,
+    )
 
     return IdeaResponse(
         id=idea.id,
