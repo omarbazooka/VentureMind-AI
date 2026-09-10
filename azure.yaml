@@ -1,0 +1,10 @@
+name: venturemind-ai
+metadata:
+  template: venturemind-ai@0.1.0
+services:
+  api:
+    project: ./backend
+    host: containerapp
+    language: docker
+    docker:
+      path: ./Dockerfile
